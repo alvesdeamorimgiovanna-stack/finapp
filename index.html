@@ -734,7 +734,18 @@ function totals(){
   const varTotal = (state.transactions||[]).filter(x=>!x.pos).reduce((a,x)=>a+Math.abs(x.v),0);
   const balance = incomeTotal - fixedTotal - varTotal;
   const investedTotal = (state.investments||[]).reduce((a,b)=>a+(b.amount||0),0);
-  return {incomeTotal, recurringIncome, entradasMes, fixedTotal, varTotal, balance, investedTotal};
+  // saldo disponível baseado nas contas marcadas (só as que a pessoa escolhe)
+  const banks = state.obBanks||[];
+  const hasAccounts = banks.length>0;
+  const dispTotal = banks.filter(b=>b.inDisp!==false).reduce((a,b)=>a+(b.balance||0),0);
+  const dispNames = banks.filter(b=>b.inDisp!==false).map(b=>b.name);
+  return {incomeTotal, recurringIncome, entradasMes, fixedTotal, varTotal, balance, investedTotal, hasAccounts, dispTotal, dispNames};
+}
+
+// mantém o total das contas em sincronia após editar/remover/descontar
+function recalcAccounts(){
+  const banks = state.obBanks||[];
+  state.accountsTotal = banks.length ? banks.reduce((a,b)=>a+(b.balance||0),0) : undefined;
 }
 
 /* ============================================================
@@ -829,8 +840,9 @@ function homeView(){
   return `
   <div class="bento">
     <div class="balance-card">
-      <div class="label">Saldo disponível · ${state.monthLabel}</div>
-      <div class="amount num">${BRL(t.balance).replace('R$','R$ ')}</div>
+      <div class="label">Saldo disponível${t.hasAccounts?'':' · '+state.monthLabel}</div>
+      <div class="amount num" style="${t.hasAccounts?'margin-bottom:4px':''}">${BRL(t.hasAccounts?t.dispTotal:t.balance).replace('R$','R$ ')}</div>
+      ${t.hasAccounts?`<div style="font-size:11.5px;color:rgba(245,244,240,.6);margin:0 0 16px">${t.dispNames.length?('Somando: '+t.dispNames.join(', ')):'Nenhuma conta marcada'} · ajuste em Ajustes → Minhas contas</div>`:''}
       <div class="balance-row">
         <div class="stat"><span class="dot" style="background:var(--lime)"></span><div class="stat-txt"><div>Entradas</div><div class="num">${BRL(t.incomeTotal)}</div></div></div>
         <div class="stat"><span class="dot" style="background:var(--red)"></span><div class="stat-txt"><div>Saídas</div><div class="num">${BRL(t.fixedTotal+t.varTotal)}</div></div></div>
@@ -847,7 +859,7 @@ function homeView(){
     </div>
     ${state.accountsTotal!==undefined ? `<div class="mini-card" style="background:var(--card);grid-column:span 6">
       <div class="top"><div class="ic" style="background:var(--purple-soft);color:var(--purple)">${ic('bank')}</div><span class="pill ok">${(state.obBanks||[]).length} contas</span></div>
-      <div><div class="val num">${BRL(state.accountsTotal)}</div><div class="lbl">Saldo somado em contas · ${(state.obBanks||[]).map(b=>b.name).join(', ')}</div></div>
+      <div><div class="val num">${BRL(state.accountsTotal)}</div><div class="lbl">Saldo total (todas as contas) · ${(state.obBanks||[]).map(b=>b.name).join(', ')}</div></div>
     </div>`:''}
   </div>
 
@@ -899,6 +911,31 @@ function txRow(x){
 
 /* ---- METAS (múltiplas) ---- */
 /* ---- RENDAS (fontes de entrada) ---- */
+function accountsSection(){
+  const banks = state.obBanks||[];
+  const t = totals();
+  return `<div class="card card-pad" style="display:flex;flex-direction:column;gap:10px">
+    ${banks.length ? banks.map((b,idx)=>`
+      <div style="border:1px solid var(--line);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="inc-ic" style="color:${b.color||'var(--purple)'}">${ic('bank')}</div>
+          <div style="flex:1;min-width:0"><div class="inc-name">${b.name}</div></div>
+          <div class="inc-val num">${BRL(b.balance||0)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="switch ${b.inDisp!==false?'on':''} acctDisp" data-i="${idx}"><span class="k"></span></button>
+          <span style="flex:1;font-size:12.5px;color:var(--ink-dim)">${b.inDisp!==false?'Entra no saldo disponível':'Fora do saldo disponível'}</span>
+          <button class="btn ghost acctEdit" data-i="${idx}" style="padding:6px 10px;font-size:12px">Editar saldo</button>
+          <button class="icon-mini acctDel" data-i="${idx}" title="Remover">${ic('x')}</button>
+        </div>
+      </div>`).join('') : `<div class="empty" style="padding:14px 8px">Nenhuma conta ainda.</div>`}
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px;font-size:12.5px;color:var(--ink-dim)">
+      <span>Saldo disponível (contas marcadas)</span><strong class="num" style="color:var(--purple)">${BRL(t.dispTotal)}</strong>
+    </div>
+    <button class="btn ghost" id="addAccountBtn" style="width:100%">${ic('plus')} Nova conta</button>
+  </div>`;
+}
+
 function incomesSection(){
   const list = state.incomes||[];
   return `<div class="card card-pad" style="display:flex;flex-direction:column;gap:8px">
@@ -1591,6 +1628,10 @@ function settingsView(){
   <div class="card card-pad">
     <div class="set-row"><div class="l">${ic('user')}<div><div class="t">${state.profile.name||'Meu perfil'}</div><div class="s">${state.profile.age?state.profile.age+' anos · ':''}${state.goals.length} meta(s)</div></div></div><button class="btn ghost" style="padding:7px 12px;font-size:12px" id="redoOnboardingBtn2">editar</button></div>
   </div>
+  <div class="section-title"><h2>Minhas contas</h2><span class="pill ok num">${BRL(totals().dispTotal)} disp.</span></div>
+  ${accountsSection()}
+  <p style="font-size:12px;color:var(--ink-faint);margin:8px 2px 0;max-width:52ch">O "Saldo disponível" da home soma só as contas marcadas. Ex.: deixe só a XP marcada se é dela que você considera o dinheiro livre. Um aporte desconta da conta escolhida.</p>
+
   <div class="section-title"><h2>Fontes de renda</h2><span class="pill ok num">${BRL((state.incomes||[]).reduce((a,i)=>a+i.val,0))}/mês</span></div>
   ${incomesSection()}
   <p style="font-size:12px;color:var(--ink-faint);margin:8px 2px 0;max-width:52ch">Rendas fixas mensais entram no seu saldo automaticamente. Recebimentos avulsos (ex: cada salário na data) você registra em "Adicionar rápido → Entrada".</p>
@@ -1772,8 +1813,14 @@ function wireRouteExtras(){
 
   // settings switches
   document.querySelectorAll('.switch').forEach(sw=>sw.onclick=()=>{
-    const k = sw.dataset.k; state.settings[k]=!state.settings[k]; render();
+    const k = sw.dataset.k; if(!k) return; state.settings[k]=!state.settings[k]; render();
   });
+
+  // contas: toggle disponível, editar, remover, adicionar
+  document.querySelectorAll('.acctDisp').forEach(b=>b.onclick=()=>{ const bk=state.obBanks[+b.dataset.i]; bk.inDisp = !(bk.inDisp!==false); render(); });
+  document.querySelectorAll('.acctEdit').forEach(b=>b.onclick=()=>openAccountModal(+b.dataset.i));
+  document.querySelectorAll('.acctDel').forEach(b=>b.onclick=()=>{ state.obBanks.splice(+b.dataset.i,1); recalcAccounts(); render(); });
+  const addAcct=document.getElementById('addAccountBtn'); if(addAcct) addAcct.onclick=()=>openAccountModal();
 
   // fab
   const fab = document.getElementById('fabAdd');
@@ -1811,11 +1858,16 @@ function openAddInvestmentModal(){
       ${['Renda Fixa','Fundos','Ações','Cripto'].map((x,idx)=>`<span class="opt ${idx===0?'sel':''}" data-v="${x}">${x}</span>`).join('')}
     </div></div>
     <div class="form-row"><label>Valor aplicado (R$)</label><input id="iAmount" type="number" step="0.01" placeholder="0,00"></div>
+    <div class="form-row"><label>De qual conta saiu?</label><div class="chip-select" id="iFrom">
+      ${(state.obBanks||[]).length ? (state.obBanks||[]).map((b,idx)=>`<span class="opt ${idx===0?'sel':''}" data-k="${b.key}">${b.name}</span>`).join('') + `<span class="opt" data-k="">Não descontar</span>` : '<span style="font-size:12px;color:var(--ink-faint)">Cadastre uma conta em Ajustes → Minhas contas para descontar automaticamente.</span>'}
+    </div></div>
     <div class="form-row"><label>Rentabilidade estimada (% a.a.)</label><input id="iRet" type="number" step="0.1" placeholder="Ex: 11.2"></div>
     <button class="btn primary" style="width:100%" id="iSave">Adicionar ativo</button>
   `);
   let type='Renda Fixa';
   document.querySelectorAll('#iType .opt').forEach(o=>o.onclick=()=>{ document.querySelectorAll('#iType .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); type=o.dataset.v; });
+  let fromKey=(state.obBanks&&state.obBanks[0])?state.obBanks[0].key:'';
+  document.querySelectorAll('#iFrom .opt').forEach(o=>o.onclick=()=>{ document.querySelectorAll('#iFrom .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); fromKey=o.dataset.k; });
   document.getElementById('iSave').onclick=()=>{
     const name=document.getElementById('iName').value.trim()||'Novo ativo';
     const inst=document.getElementById('iInst').value.trim()||'—';
@@ -1823,7 +1875,8 @@ function openAddInvestmentModal(){
     const ret=parseFloat(document.getElementById('iRet').value)||0;
     if(amount<=0) return;
     if(!state.investments) state.investments=[];
-    state.investments.unshift({name, inst, type, amount, ret});
+    if(fromKey){ const acc=(state.obBanks||[]).find(b=>b.key===fromKey); if(acc){ acc.balance=(acc.balance||0)-amount; recalcAccounts(); } }
+    state.investments.unshift({name, inst, type, amount, ret, fromKey});
     closeModal(); render();
   };
 }
@@ -1869,6 +1922,27 @@ function openAddIncomeModal(editIdx){
     if(editing) state.incomes[editIdx]={...cur, name, val};
     else state.incomes.push({name, val, icon:'wallet'});
     closeModal(); render();
+  };
+}
+
+function openAccountModal(editIdx){
+  if(!state.obBanks) state.obBanks=[];
+  const editing = editIdx!=null && state.obBanks[editIdx];
+  const cur = editing ? state.obBanks[editIdx] : {name:'',balance:'',color:'#834AFF',inDisp:true};
+  openModal(`
+    <div class="modal-head"><h3>${editing?'Editar conta':'Nova conta'}</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
+    <div class="form-row"><label>Nome da conta</label><input id="acName" value="${editing?cur.name:''}" placeholder="Ex: XP, Nubank, Mercado Pago"></div>
+    <div class="form-row"><label>Saldo atual (R$)</label><input id="acBal" type="number" step="0.01" value="${editing?(cur.balance||''):''}" placeholder="0,00"></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-dim);margin:4px 2px 10px;cursor:pointer"><input type="checkbox" id="acDisp" ${(!editing||cur.inDisp!==false)?'checked':''}> Entra no "Saldo disponível" da home</label>
+    <button class="btn primary" style="width:100%" id="acSave">${editing?'Salvar':'Adicionar conta'}</button>
+  `);
+  document.getElementById('acSave').onclick=()=>{
+    const name=document.getElementById('acName').value.trim()||'Conta';
+    const balance=parseFloat(document.getElementById('acBal').value)||0;
+    const inDisp=document.getElementById('acDisp').checked;
+    if(editing){ state.obBanks[editIdx]={...cur, name, balance, inDisp}; }
+    else{ state.obBanks.push({key:'acc'+Date.now(), name, color:'#834AFF', balance, inDisp, custom:true}); }
+    recalcAccounts(); closeModal(); render();
   };
 }
 
@@ -2654,5 +2728,3 @@ if (window.FINAPP_CLOUD_ENABLED) {
 }
 </script>
 <script src="cloud.js"></script>
-
-<!-- deploy automatico ligado em 2026-07-28 -->
