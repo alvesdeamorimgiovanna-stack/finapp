@@ -46,20 +46,42 @@
     document.body.appendChild(box);
     var email = box.querySelector('#clEmail'), pass = box.querySelector('#clPass'), out = box.querySelector('#clMsg');
     function creds() { return { email: (email.value || '').trim(), password: pass.value || '' }; }
+    // traduz erros comuns do Supabase para algo legível
+    function friendly(err) {
+      if (!err) return 'Algo deu errado. Tente de novo.';
+      var m = (err.message || err.error_description || err.msg || '').toString();
+      var code = (err.code || err.error || '').toString();
+      var low = (m + ' ' + code).toLowerCase();
+      if (low.indexOf('already registered') >= 0 || low.indexOf('already been registered') >= 0 || code === 'user_already_exists')
+        return 'Esse e-mail já tem conta. Toque em "Entrar".';
+      if (low.indexOf('invalid login') >= 0 || code === 'invalid_credentials')
+        return 'E-mail ou senha incorretos.';
+      if (low.indexOf('email not confirmed') >= 0 || code === 'email_not_confirmed')
+        return 'Confirme o e-mail pelo link que enviamos e depois entre.';
+      if (low.indexOf('weak') >= 0 || code === 'weak_password')
+        return 'Senha fraca: use maiúscula, minúscula, número e símbolo.';
+      if (low.indexOf('rate') >= 0 || low.indexOf('too many') >= 0)
+        return 'Muitas tentativas. Espere um minuto e tente de novo.';
+      if (low.indexOf('database error') >= 0 || low.indexOf('sending') >= 0 || low.indexOf('email') >= 0 || m === '{}' || m === '')
+        return 'Erro no envio do e-mail de confirmação. Verifique a configuração de e-mail (SMTP) no Supabase.';
+      return m || ('Erro (' + (code || 'desconhecido') + ')');
+    }
     box.querySelector('#clLogin').onclick = function () {
       out.textContent = 'Entrando…';
       sb.auth.signInWithPassword(creds()).then(function (r) {
-        if (r.error) out.textContent = 'Não deu: ' + r.error.message;
-      });
+        if (r.error) out.textContent = friendly(r.error);
+      }).catch(function (e) { out.textContent = 'Sem conexão com o servidor. Tente de novo.'; console.warn('[cloud] login', e); });
     };
     box.querySelector('#clSignup').onclick = function () {
       var c = creds();
+      if (!c.email) { out.textContent = 'Digite seu e-mail.'; return; }
       if (c.password.length < 6) { out.textContent = 'A senha precisa de pelo menos 6 caracteres.'; return; }
       out.textContent = 'Criando conta…';
       sb.auth.signUp(c).then(function (r) {
-        if (r.error) out.textContent = 'Não deu: ' + r.error.message;
-        else out.textContent = 'Conta criada! Se pedir, confirme pelo e-mail e depois entre.';
-      });
+        if (r.error) { out.textContent = friendly(r.error); console.warn('[cloud] signup', r.error); }
+        else if (r.data && r.data.session) out.textContent = 'Conta criada! Entrando…';
+        else out.textContent = 'Conta criada! Confirme pelo link no seu e-mail e depois toque em "Entrar".';
+      }).catch(function (e) { out.textContent = 'Sem conexão com o servidor. Tente de novo.'; console.warn('[cloud] signup', e); });
     };
     pass.onkeydown = function (e) { if (e.key === 'Enter') box.querySelector('#clLogin').click(); };
   }
