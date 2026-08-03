@@ -1569,7 +1569,7 @@ function askFin(raw){
   if((cardName || mentionsCredit) && !cd && /(gast|fatura|cartao|paguei|real|quanto|devo|dever)/.test(q)){
     if(!state.cards.length) return {text:'Você ainda não tem cartões cadastrados. Adicione na aba Cartões.'};
     const bd=(state.cards||[]).filter(c=>!cardName||c.bank===cardName).map(c=>{
-      const owed=cardTx(c.bank).reduce((a,x)=>a+sharesSum(x),0);
+      const owed=cardTx(c.bank).filter(x=>!x.date||x.date.month===TODAY.month).reduce((a,x)=>a+sharesSum(x),0);
       return {bank:c.bank, fatura:c.balance||0, owed, real:Math.max(0,(c.balance||0)-owed)};
     });
     const totFat=bd.reduce((a,c)=>a+c.fatura,0);
@@ -1704,9 +1704,14 @@ function cartoesView(){
   const active = Math.min(state.activeCard||0, state.cards.length-1);
   const c = state.cards[active];
   const tx = cardTx(c.bank);
-  const sum = tx.reduce((a,x)=>a+Math.abs(x.v),0);
+  const curTx = tx.filter(x=>!x.date || x.date.month===TODAY.month); // fatura do mês corrente
+  const sum = curTx.reduce((a,x)=>a+Math.abs(x.v),0);
   const diff = Math.abs(sum - c.balance) > 0.5;
-  const allShares = tx.flatMap(x=>txShares(x));
+  // próximas faturas (parcelas/lançamentos em meses futuros), ordenadas por proximidade
+  const futMap={};
+  tx.forEach(x=>{ if(!x.date) return; const mi=MONTHS_ABBR.indexOf(x.date.month); if(mi<0) return; const dist=(mi-TODAY.monthIdx+12)%12; if(dist>=1 && dist<=11){ if(!futMap[dist]) futMap[dist]={month:x.date.month, total:0, count:0}; futMap[dist].total+=Math.abs(x.v); futMap[dist].count++; } });
+  const futMonths=Object.keys(futMap).map(Number).sort((a,b)=>a-b);
+  const allShares = curTx.flatMap(x=>txShares(x)); // fatura atual (parcelas futuras vão em "Próximas faturas")
   const owedUnpaid = allShares.filter(s=>!s.paid).reduce((a,s)=>a+s.amt,0);
   const received = allShares.filter(s=>s.paid).reduce((a,s)=>a+s.amt,0);
   const othersTotal = owedUnpaid + received;
@@ -1728,8 +1733,8 @@ function cartoesView(){
   <div class="card card-pad" style="margin-top:14px">
     <div class="cartao-stats">
       <div><div class="cs-k">Fatura registrada</div><div class="cs-v num">${BRL(c.balance)}</div></div>
-      <div><div class="cs-k">Soma dos lançamentos</div><div class="cs-v num">${BRL(sum)}</div></div>
-      <div><div class="cs-k">Lançamentos</div><div class="cs-v num">${tx.length}</div></div>
+      <div><div class="cs-k">Soma (mês atual)</div><div class="cs-v num">${BRL(sum)}</div></div>
+      <div><div class="cs-k">Lançamentos</div><div class="cs-v num">${curTx.length}</div></div>
     </div>
     ${diff?`<div class="cartao-warn">${ic('bell')} A soma dos lançamentos (${BRL(sum)}) não bate com a fatura registrada (${BRL(c.balance)}). Confira os itens ou ajuste a fatura.</div>`:`<div class="cartao-ok">${ic('check')} Fatura e lançamentos batem certinho.</div>`}
     <div style="display:flex;gap:8px;margin-top:12px">
@@ -1756,9 +1761,18 @@ function cartoesView(){
     </div>
   </div>`:''}
 
-  <div class="section-title"><h2>Lançamentos da fatura</h2><span class="pill ok">${tx.length}</span></div>
+  ${futMonths.length?`<div class="section-title"><h2>Próximas faturas</h2><span class="pill ok">parcelas</span></div>
+  <div class="card card-pad" style="display:flex;flex-direction:column;gap:2px">
+    ${futMonths.map(d=>{const f=futMap[d];return `<div class="settle-row" style="padding:10px 0">
+      <span class="who">${ic('cal')} ${f.month.charAt(0)+f.month.slice(1).toLowerCase()} <span style="color:var(--ink-faint);font-size:12px;margin-left:4px">${f.count} lançamento${f.count>1?'s':''}</span></span>
+      <span class="amt num">${BRL(f.total)}</span>
+    </div>`;}).join('')}
+    <p style="font-size:11.5px;color:var(--ink-faint);margin:8px 2px 0">Projeção das próximas faturas com base nas parcelas e lançamentos futuros deste cartão.</p>
+  </div>`:''}
+
+  <div class="section-title"><h2>Lançamentos da fatura</h2><span class="pill ok">${curTx.length}</span></div>
   <div class="card card-pad">
-    ${tx.length? tx.map((x,i)=>`<div class="tx-row">
+    ${curTx.length? curTx.map((x,i)=>`<div class="tx-row">
       <div class="tx-ic" style="background:${colorSoft(x.color)};color:${x.color==='lime'?'var(--lime-ink)':colorVar(x.color)}">${ic(x.icon)}</div>
       <div class="tx-mid"><div class="t">${x.t}</div><div class="s">${x.cat||'Outros'}${x.date?` · ${String(x.date.day).padStart(2,'0')} ${x.date.month.toLowerCase()}`:''}</div>${(()=>{const sh=txShares(x);if(!sh.length)return '';const un=sh.filter(s=>!s.paid).reduce((a,s)=>a+s.amt,0);const pd=sh.filter(s=>s.paid).reduce((a,s)=>a+s.amt,0);return `<div class="s" style="color:var(--purple)">divide · ${sh.length} pessoa(s)${un>0?' · a receber '+BRL(un):''}${pd>0?' · '+BRL(pd)+' recebido':''}</div>`;})()}</div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -2119,6 +2133,14 @@ function openCardTxModal(cardIdx){
       <div id="ctPeopleRows"></div>
       <div style="font-size:11.5px;color:var(--ink-faint);margin-top:2px">O valor cheio entra na fatura. Cada pessoa (fora você) te deve a parte dela — os valores começam iguais, mas você pode ajustar.</div>
     </div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-dim);margin:2px 2px 6px;cursor:pointer"><input type="checkbox" id="ctInstall"> Parcelar</label>
+    <div id="ctInstallBox" style="display:none">
+      <div class="qa-two">
+        <div class="qa-field"><label>Nº de parcelas</label><input id="ctParcelas" type="number" min="2" step="1" value="2"></div>
+        <div class="qa-field"><label>1ª parcela</label><div class="chip-select" id="ctStart"><span class="opt" data-v="0">Este mês</span><span class="opt sel" data-v="1">Próximo mês</span></div></div>
+      </div>
+      <div id="ctInstallInfo" style="font-size:11.5px;color:var(--purple);margin-top:4px"></div>
+    </div>
     <button class="btn primary" style="width:100%" id="ctSave">${ic('plus')} Adicionar à fatura</button>
   `);
   let cat=CATEGORIES[0].name;
@@ -2141,12 +2163,27 @@ function openCardTxModal(cardIdx){
   }
   chk.onchange=()=>{ sb.style.display=chk.checked?'block':'none'; if(chk.checked) renderCtRows(); };
   document.getElementById('ctPeople').oninput=renderCtRows;
-  document.getElementById('ctVal').addEventListener('input', ()=>{ if(chk.checked) renderCtRows(); });
+  document.getElementById('ctVal').addEventListener('input', ()=>{ if(chk.checked) renderCtRows(); updateInstallInfo(); });
+  // parcelamento
+  const inst=document.getElementById('ctInstall'), ib=document.getElementById('ctInstallBox');
+  let startOff=1;
+  document.querySelectorAll('#ctStart .opt').forEach(o=>o.onclick=()=>{ document.querySelectorAll('#ctStart .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); startOff=parseInt(o.dataset.v)||0; updateInstallInfo(); });
+  function updateInstallInfo(){
+    const info=document.getElementById('ctInstallInfo'); if(!info) return;
+    if(!inst.checked){ info.textContent=''; return; }
+    const N=Math.max(2, parseInt(document.getElementById('ctParcelas').value)||2);
+    const val=parseFloat(document.getElementById('ctVal').value)||0;
+    const per=val? val/N : 0;
+    const m1=MONTHS_ABBR[(TODAY.monthIdx+startOff)%12];
+    const mN=MONTHS_ABBR[(TODAY.monthIdx+startOff+N-1)%12];
+    info.textContent = val? `${N}x de ${BRL(per)} — de ${m1} a ${mN}.` : `${N}x — começa em ${m1}.`;
+  }
+  inst.onchange=()=>{ ib.style.display=inst.checked?'block':'none'; updateInstallInfo(); };
+  document.getElementById('ctParcelas').oninput=updateInstallInfo;
   document.getElementById('ctSave').onclick=()=>{
     const val=parseFloat(document.getElementById('ctVal').value)||0; if(val<=0){ document.getElementById('ctVal').style.borderColor='var(--red)'; return; }
     const desc=document.getElementById('ctDesc').value.trim()||cat;
     const dv=document.getElementById('ctDate').value||TODAY_ISO; const [,M,D]=dv.split('-').map(Number);
-    const date={day:D, month:MONTHS_ABBR[(M-1)]||TODAY.month};
     const meta=catMeta(cat);
     let shares=[];
     if(chk.checked){
@@ -2157,9 +2194,29 @@ function openCardTxModal(cardIdx){
       });
     }
     const owedSum=shares.reduce((a,s)=>a+s.amt,0);
-    c.balance += val;
-    state.transactions.unshift({ t:desc, s:`${cat} · Crédito · ${c.bank}`, v:-val, pos:false, icon:meta.icon, color:meta.color, cat, method:'Crédito', card:c.bank, shares, owed:owedSum, owedBy:(shares[0]?shares[0].name:''), date });
-    if(date.month===TODAY.month) state.selectedDay=date.day;
+    if(!inst.checked){
+      // à vista: entra na fatura na data escolhida
+      const date={day:D, month:MONTHS_ABBR[(M-1)]||TODAY.month};
+      c.balance += val;
+      state.transactions.unshift({ t:desc, s:`${cat} · Crédito · ${c.bank}`, v:-val, pos:false, icon:meta.icon, color:meta.color, cat, method:'Crédito', card:c.bank, shares, owed:owedSum, owedBy:(shares[0]?shares[0].name:''), date });
+      if(date.month===TODAY.month) state.selectedDay=date.day;
+    } else {
+      // parcelado: 1 lançamento por mês, começando em "startOff"
+      const N=Math.max(2, parseInt(document.getElementById('ctParcelas').value)||2);
+      const group='p'+Date.now();
+      const base=Math.floor(val/N*100)/100;
+      const sBase=shares.map(s=>Math.floor(s.amt/N*100)/100);
+      for(let k=0;k<N;k++){
+        const isLast=k===N-1;
+        const pval=isLast? +(val-base*(N-1)).toFixed(2) : base;
+        const pshares=shares.map((s,si)=>({ name:s.name, amt:(isLast? +(s.amt-sBase[si]*(N-1)).toFixed(2) : sBase[si]), paid:false })).filter(s=>s.amt>0);
+        const powed=pshares.reduce((a,s)=>a+s.amt,0);
+        const pmonth=MONTHS_ABBR[(TODAY.monthIdx+startOff+k)%12];
+        const pdate={day:D, month:pmonth};
+        state.transactions.unshift({ t:`${desc} (${k+1}/${N})`, s:`${cat} · Crédito · ${c.bank} · parcela ${k+1}/${N}`, v:-pval, pos:false, icon:meta.icon, color:meta.color, cat, method:'Crédito', card:c.bank, shares:pshares, owed:powed, owedBy:(pshares[0]?pshares[0].name:''), date:pdate, inst:{i:k+1, n:N, group} });
+        if(pmonth===TODAY.month) c.balance += pval; // só a parcela do mês corrente entra na fatura atual
+      }
+    }
     closeModal(); render();
   };
 }
