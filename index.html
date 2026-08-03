@@ -1511,67 +1511,127 @@ function chatDetectCard(q){
 function askFin(raw){
   const q = norm(raw);
   const t = totals();
+  const sharesSum = x => txShares(x).reduce((s,sh)=>s+sh.amt,0);
+  const cardName = chatDetectCard(q);
+  const mentionsCredit = /credito|cartao/.test(q);
+  const tf = chatTimeFilter(q);
+  const cd = chatDetectCat(q);
+
+  // saudação / agradecimento
+  if(/^(oi|ola|eae|opa|hey|bom dia|boa tarde|boa noite)\b/.test(q) && q.length<24)
+    return {text:`Oi! 👋 Pode perguntar coisas como "quanto gastei com uber essa semana", "qual meu gasto real no cartão esse mês", "quem me deve" ou "qual meu saldo".`};
+  if(/obrigad|valeu|vlw|brigad|thanks|obg/.test(q))
+    return {text:'Por nada! 😊 Se precisar de mais alguma conta, é só chamar.'};
   // ajuda
-  if(/ajuda|o que.*(pode|sabe)|como funciona|exemplos?/.test(q))
-    return {text:'Posso te dizer quanto você gastou (por categoria, período ou cartão), sua renda, seu saldo, o quanto falta pras metas e seu maior gasto. Ex: "quanto gastei com uber essa semana", "qual meu saldo", "quanto falta pra reserva".'};
+  if(/ajuda|o que.*(pode|sabe|faz)|como funciona|exemplos?/.test(q))
+    return {text:'Eu calculo em cima dos seus dados. Posso te dizer:', list:[
+      ['Gastos','por categoria, período ou cartão'],
+      ['Gasto real no cartão','sua parte, descontando o que te devem'],
+      ['Quem te deve','a receber de cada pessoa'],
+      ['Saldo','disponível nas suas contas'],
+      ['Renda e investido','entradas do mês e patrimônio'],
+      ['Metas','quanto falta pra cada uma'],
+    ]};
+
+  // quem me deve / a receber
+  if(/quem.*(me )?deve|me devem|a receber|falta receber|quanto.*(me )?devem|tenho pra receber/.test(q)){
+    const byP={};
+    (state.transactions||[]).forEach(x=>{ txShares(x).forEach(s=>{ if(!s.paid){ byP[s.name||'Alguém']=(byP[s.name||'Alguém']||0)+s.amt; } }); });
+    const entries=Object.entries(byP).filter(([,v])=>v>0.01).sort((a,b)=>b[1]-a[1]);
+    if(!entries.length) return {text:'Ninguém está te devendo agora. Tudo quitado ✅'};
+    const tot=entries.reduce((a,[,v])=>a+v,0);
+    return {text:`Você tem ${BRL(tot)} a receber:`, list:entries.map(([n,v])=>[n, BRL(v)])};
+  }
+  // já recebido de divisões
+  if(/ja recebi|quanto recebi|ja me pagaram|recebido dos|quitad/.test(q)){
+    let rec=0; (state.transactions||[]).forEach(x=>{ txShares(x).forEach(s=>{ if(s.paid) rec+=s.amt; }); });
+    return {text: rec>0 ? `Você já recebeu ${BRL(rec)} de divisões de compras.` : 'Você ainda não marcou nenhum recebimento de divisão.'};
+  }
+
+  // GASTO REAL (sua parte, descontando o que os outros te devem)
+  if(/gasto real|gastei de verdade|minha parte|de verdade (foi|gastei)|realmente gastei|foi meu mesmo|so o meu/.test(q)){
+    let tx=(state.transactions||[]).filter(x=>!x.pos && tf.test(x.date));
+    if(cardName) tx=tx.filter(x=>x.card===cardName);
+    else if(mentionsCredit) tx=tx.filter(x=>x.method==='Crédito');
+    if(cd) tx=tx.filter(x=> x.cat===cd.cat || CHAT_SYN[cd.cat].some(w=>norm(x.t).includes(w)));
+    const gross=tx.reduce((a,x)=>a+Math.abs(x.v),0);
+    const others=tx.reduce((a,x)=>a+sharesSum(x),0);
+    const real=Math.max(0, gross-others);
+    const onde = cardName?` no ${cardName}` : (mentionsCredit?' no cartão de crédito':'');
+    if(!tx.length) return {text:`Não achei gastos${onde} ${tf.label}. 🙂`};
+    const extra = others>0 ? ` (do total de ${BRL(gross)}, ${BRL(others)} é de outras pessoas)` : '';
+    return {text:`Seu gasto real${onde} ${tf.label} foi ${BRL(real)}${extra}.`};
+  }
+
   // renda
-  if(/quanto (ganho|ganhei|recebo|recebi)|minha renda|entrada de dinheiro/.test(q)){
+  if(/quanto (ganho|ganhei|recebo|recebi)|minha renda|entrada de dinheiro|quanto entrou/.test(q)){
     const parts = (state.incomes||[]).map(i=>[i.name+' (fixa)', BRL(i.val)]);
     if(t.entradasMes>0) parts.push(['Entradas registradas no mês', BRL(t.entradasMes)]);
-    if(!parts.length) return {text:'Você ainda não tem renda cadastrada. Cadastre em Configurações → Fontes de renda, ou registre em "Adicionar rápido → Entrada".'};
+    if(!parts.length) return {text:'Você ainda não tem renda cadastrada. Cadastre em Ajustes → Fontes de renda, ou registre em "Adicionar rápido → Entrada".'};
     return {text:`Sua renda neste mês é ${BRL(t.incomeTotal)}:`, list:parts};
   }
   // investido
-  if(/investi|investido|investimento|aplicado|patrimonio/.test(q)){
-    if(!state.investments.length) return {text:'Você ainda não registrou investimentos. A aba Investimentos te ajuda com isso.'};
+  if(/investi|investido|investimento|aplicado|patrimonio|rende|rendiment/.test(q)){
+    if(!state.investments.length) return {text:'Você ainda não registrou investimentos. A aba Investimentos (menu "Mais") te ajuda com isso.'};
     return {text:`Você tem ${BRL(t.investedTotal)} investidos em ${state.investments.length} ativo(s):`, list:state.investments.map(i=>[`${i.name} (${i.type})`, BRL(i.amount)])};
   }
   // metas
-  if(/meta|falta|objetivo|guardar|guardei/.test(q)){
+  if(/meta|falta|objetivo|guardar|guardei|sonho/.test(q)){
     if(!state.goals.length) return {text:'Você ainda não tem metas. Dá pra criar na Home, em "Minhas metas".'};
     const g = state.goals.find(g=>q.includes(norm(g.name)) || norm(g.name).split(' ').some(w=>w.length>3&&q.includes(w)));
     const list = (g?[g]:state.goals);
     return {text: g?`Pra meta "${g.name}" faltam ${BRL(Math.max(0,g.target-g.saved))} de ${BRL(g.target)} (${Math.round(g.saved/g.target*100)}% concluído).` : 'Veja o andamento das suas metas:',
       list: g?null:list.map(x=>[x.name, `faltam ${BRL(Math.max(0,x.target-x.saved))}`])};
   }
-  // saldo
-  if(/saldo|quanto (tenho|sobra|me sobra|posso gastar)|quanto sobrou/.test(q)){
+  // saldo de uma conta específica ("quanto tenho na xp")
+  const bankHit = (state.obBanks||[]).find(b=>q.includes(norm(b.name)));
+  if(bankHit && /(saldo|tenho|conta|quanto)/.test(q) && !/gast|fatura/.test(q)){
+    return {text:`Na conta ${bankHit.name} você tem ${BRL(bankHit.balance||0)}${bankHit.inDisp===false?' (não entra no saldo disponível)':''}.`};
+  }
+  // saldo disponível
+  if(/saldo|quanto (tenho|sobra|me sobra|posso gastar)|quanto sobrou|dinheiro (tenho|disponivel)/.test(q)){
+    if(t.hasAccounts){
+      return {text:`Seu saldo disponível é ${BRL(t.dispTotal)}${t.dispNames.length?` (somando ${t.dispNames.join(', ')})`:''}.`,
+        list:(state.obBanks||[]).filter(b=>b.inDisp!==false).map(b=>[b.name, BRL(b.balance||0)])};
+    }
     return {text:`Seu saldo disponível ${state.monthLabel.split(' ')[0]} é ${BRL(t.balance)}.`, list:[['Entradas', BRL(t.incomeTotal)],['Gastos fixos', '−'+BRL(t.fixedTotal)],['Gastos variáveis', '−'+BRL(t.varTotal)]]};
   }
   // fatura de cartão
-  const cardName = chatDetectCard(q);
-  if(cardName && /(fatura|cartao|cartão)/.test(q) && !/gast/.test(q)){
-    const c = state.cards.find(x=>x.bank===cardName);
-    return {text:`A fatura atual do ${cardName} é ${BRL(c.balance)}.`};
+  if((cardName||mentionsCredit) && /(fatura|cartao)/.test(q) && !/gast|paguei|real/.test(q)){
+    if(cardName){ const c=state.cards.find(x=>x.bank===cardName); return {text:`A fatura atual do ${cardName} é ${BRL(c.balance)}.`}; }
+    const totalFat=(state.cards||[]).reduce((a,c)=>a+(c.balance||0),0);
+    if(!state.cards.length) return {text:'Você ainda não tem cartões cadastrados.'};
+    return {text:`Suas faturas somam ${BRL(totalFat)}:`, list:state.cards.map(c=>[c.bank, BRL(c.balance)])};
   }
   // onde gasto mais
-  if(/onde.*(gast|dinheiro)|maiores categorias|por categoria|em que.*gast/.test(q)){
+  if(/onde.*(gast|dinheiro)|maiores categorias|por categoria|em que.*gast|com o que.*gast/.test(q)){
     const cats = categorySpending();
     if(!cats.length) return {text:'Ainda não há gastos registrados pra analisar.'};
     return {text:'Suas maiores categorias de gasto são:', list:cats.slice(0,5).map(([n,v])=>[n, BRL(v)])};
   }
   // gastos (com categoria/tempo/cartão) — inclui "maior gasto"
-  const tf = chatTimeFilter(q);
-  const cd = chatDetectCat(q);
   let tx = (state.transactions||[]).filter(x=>!x.pos && tf.test(x.date));
   if(cardName) tx = tx.filter(x=>x.card===cardName);
+  else if(mentionsCredit) tx = tx.filter(x=>x.method==='Crédito');
   if(cd) tx = tx.filter(x=> x.cat===cd.cat || CHAT_SYN[cd.cat].some(w=>norm(x.t).includes(w)));
   const subjectLabel = cd ? (norm(cd.cat)===cd.term ? cd.cat.toLowerCase() : cd.term) : '';
   const subject = cd? ` com ${subjectLabel}` : '';
-  const cardPhrase = cardName? ` no ${cardName}` : '';
-  if(/maior gasto|maior despesa|gastei mais/.test(q)){
+  const cardPhrase = cardName? ` no ${cardName}` : (mentionsCredit?' no cartão de crédito':'');
+  if(/maior gasto|maior despesa|gastei mais|gasto mais caro/.test(q)){
     if(!tx.length) return {text:`Não achei gastos${subject}${cardPhrase} ${tf.label}.`};
     const big = tx.reduce((a,b)=>Math.abs(b.v)>Math.abs(a.v)?b:a);
     return {text:`Seu maior gasto${subject}${cardPhrase} ${tf.label} foi "${big.t}": ${BRL(Math.abs(big.v))}${big.date?` (dia ${big.date.day})`:''}.`};
   }
-  if(/quanto|gast|despesa|paguei|gastei/.test(q) || cd || cardName){
+  if(/quanto|gast|despesa|paguei|gastei|comprei/.test(q) || cd || cardName || mentionsCredit){
     const total = tx.reduce((a,x)=>a+Math.abs(x.v),0);
     if(!tx.length) return {text:`Não encontrei gastos${subject}${cardPhrase} ${tf.label}. 🙂`};
     const top = tx.slice().sort((a,b)=>Math.abs(b.v)-Math.abs(a.v)).slice(0,4).map(x=>[x.t + (x.date?` · ${x.date.day}/${MONTHS_ABBR.indexOf(x.date.month)+1}`:''), BRL(Math.abs(x.v))]);
-    return {text:`Você gastou ${BRL(total)}${subject}${cardPhrase} ${tf.label}, em ${tx.length} lançamento(s):`, list:top};
+    const others = tx.reduce((a,x)=>a+sharesSum(x),0);
+    const realNote = others>0 ? ` Desses, ${BRL(others)} outras pessoas te devem — seu gasto real foi ${BRL(total-others)}.` : '';
+    return {text:`Você gastou ${BRL(total)}${subject}${cardPhrase} ${tf.label}, em ${tx.length} lançamento(s).${realNote}`, list:top};
   }
   // fallback
-  return {text:'Não entendi 100% 🤔. Tenta assim: "quanto gastei com uber essa semana", "qual meu saldo" ou "quanto falta pra minha meta".'};
+  return {text:'Não entendi 100% 🤔. Tenta assim: "quanto gastei com uber essa semana", "qual meu gasto real no cartão esse mês", "quem me deve" ou "qual meu saldo".'};
 }
 
 function chatBubble(m){
@@ -1581,7 +1641,7 @@ function chatBubble(m){
 }
 function assistantView(){
   if(!state.chat) state.chat=[{role:'bot', text:`Oi${state.profile.name?', '+state.profile.name.split(' ')[0]:''}! Sou o Fin 👋 Pergunta o que quiser sobre suas finanças — tipo "quanto gastei com uber essa semana".`}];
-  const sugg = ['Quanto gastei essa semana?','Gastos com alimentação','Qual meu saldo?','Onde gasto mais?','Quanto falta pra minha meta?'];
+  const sugg = ['Qual meu gasto real no cartão esse mês?','Quem me deve?','Qual meu saldo?','Quanto gastei essa semana?','Onde gasto mais?','Quanto falta pra minha meta?'];
   return `
   <div class="section-title" style="margin-top:6px"><h2>Assistente Fin</h2><span class="pill ok">${ic('sparkle')} IA</span></div>
   <div class="card chat-wrap">
