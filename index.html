@@ -1537,10 +1537,17 @@ function askFin(raw){
   const debtorNames=[...new Set([].concat(...(state.transactions||[]).map(x=>txShares(x).map(s=>s.name||'Alguém'))))].filter(Boolean);
   const personHit=debtorNames.find(n=>q.includes(norm(n)));
   if(personHit && /deve|dev|receber|pagou|pagar|falta|quitad/.test(q)){
-    let unpaid=0,paid=0;
-    (state.transactions||[]).forEach(x=>txShares(x).forEach(s=>{ if((s.name||'Alguém')===personHit){ if(s.paid) paid+=s.amt; else unpaid+=s.amt; } }));
+    let unpaid=0,paid=0; const details=[];
+    (state.transactions||[]).forEach(x=>txShares(x).forEach(s=>{
+      if((s.name||'Alguém')!==personHit) return;
+      const dia = x.date?` · ${String(x.date.day).padStart(2,'0')}/${MONTHS_ABBR.indexOf(x.date.month)+1}`:'';
+      const onde = x.card?` · ${x.card}`:'';
+      if(s.paid){ paid+=s.amt; }
+      else { unpaid+=s.amt; details.push([`${x.t}${onde}${dia}`, BRL(s.amt)]); }
+    }));
     if(unpaid<=0 && paid<=0) return {text:`${personHit} não tem nada registrado com você.`};
-    return {text:`${personHit} ${unpaid>0?`te deve ${BRL(unpaid)}`:'está quitado ✅'}${paid>0?` — já te pagou ${BRL(paid)}`:''}.`};
+    if(unpaid<=0) return {text:`${personHit} está quitado ✅${paid>0?` — já te pagou ${BRL(paid)}`:''}.`};
+    return {text:`${personHit} te deve ${BRL(unpaid)}${paid>0?` (já te pagou ${BRL(paid)})`:''}, somando todos os cartões:`, list:details};
   }
   // quem me deve / a receber (geral)
   if(/quem.*deve|me deve|me devem|a receber|falta receber|tenho pra receber|quem (ta|esta) devendo|quanto.*deve/.test(q)){
