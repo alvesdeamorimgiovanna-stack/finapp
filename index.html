@@ -1706,7 +1706,8 @@ function cartoesView(){
   if(state.cardMonth==null) state.cardMonth=TODAY.monthIdx;
   const cm = ((state.cardMonth%12)+12)%12;
   const isCurrent = cm===TODAY.monthIdx;
-  const monthTx = cardTx(c.bank).filter(x=>x.date && MONTHS_ABBR.indexOf(x.date.month)===cm);
+  // no mês atual mostramos também lançamentos sem data (legados) pra nada sumir
+  const monthTx = cardTx(c.bank).filter(x=> isCurrent ? (!x.date || MONTHS_ABBR.indexOf(x.date.month)===cm) : (x.date && MONTHS_ABBR.indexOf(x.date.month)===cm));
   const launchSum = monthTx.reduce((a,x)=>a+Math.abs(x.v),0);
   const fatura = isCurrent ? c.balance : launchSum; // mês atual: fatura registrada; outros meses: soma dos lançamentos
   const shares = monthTx.flatMap(x=>txShares(x));
