@@ -930,10 +930,15 @@ function walletStack(){
 
 function txRow(x){
   const dateStr = x.date ? `${String(x.date.day).padStart(2,'0')} ${x.date.month.toLowerCase()}` : '';
+  const gi = state.transactions.indexOf(x);
+  const owedBadge = (x.owed>0) ? `<div class="s" style="color:var(--purple)">${ic('groups')} divide${x.owedBy?' · '+x.owedBy:''} te deve ${BRL(x.owed)}</div>` : '';
   return `<div class="tx-row">
     <div class="tx-ic" style="background:${colorSoft(x.color)};color:${x.color==='lime'?'var(--lime-ink)':colorVar(x.color)}">${ic(x.icon)}</div>
-    <div class="tx-mid"><div class="t">${x.t}</div><div class="s">${x.s}${dateStr?` · ${dateStr}`:''}</div></div>
-    <div class="tx-val ${x.pos?'pos':'neg'} num">${x.pos?'+':'−'} ${BRL(Math.abs(x.v))}</div>
+    <div class="tx-mid"><div class="t">${x.t}</div><div class="s">${x.s}${dateStr?` · ${dateStr}`:''}</div>${owedBadge}</div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="tx-val ${x.pos?'pos':'neg'} num">${x.pos?'+':'−'} ${BRL(Math.abs(x.v))}</div>
+      ${gi>=0?`<button class="icon-mini txDel" data-i="${gi}" title="Excluir">${ic('x')}</button>`:''}
+    </div>
   </div>`;
 }
 
@@ -1613,6 +1618,11 @@ function cartoesView(){
   const tx = cardTx(c.bank);
   const sum = tx.reduce((a,x)=>a+Math.abs(x.v),0);
   const diff = Math.abs(sum - c.balance) > 0.5;
+  const owedTotal = tx.reduce((a,x)=>a+(x.owed||0),0);
+  const myReal = Math.max(0, c.balance - owedTotal);
+  const byPerson = {};
+  tx.forEach(x=>{ if(x.owed>0){ const k=x.owedBy||'Alguém'; byPerson[k]=(byPerson[k]||0)+x.owed; } });
+  const people = Object.entries(byPerson).sort((a,b)=>b[1]-a[1]);
   return `
   <div class="section-title" style="margin-top:6px"><h2>Cartões</h2><button class="link" id="addCardBtn">+ cartão</button></div>
 
@@ -1637,11 +1647,25 @@ function cartoesView(){
     </div>
   </div>
 
+  ${owedTotal>0?`<div class="card card-pad" style="margin-top:14px">
+    <div class="cartao-stats">
+      <div><div class="cs-k">Seu gasto real</div><div class="cs-v num" style="color:var(--red)">${BRL(myReal)}</div></div>
+      <div><div class="cs-k">A receber de terceiros</div><div class="cs-v num" style="color:var(--purple)">${BRL(owedTotal)}</div></div>
+    </div>
+    <p style="font-size:11.5px;color:var(--ink-faint);margin:10px 2px 0">A fatura cheia (${BRL(c.balance)}) é sua no vencimento. "Seu gasto real" desconta o que outras pessoas te devem.</p>
+    <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px">
+      ${people.map(([name,amt])=>`<div class="settle-row" style="padding:8px 0">
+        <span class="who"><span class="mchip" style="position:static;margin:0;background:${memberColors[name]||'#8B5CF6'};color:#fff">${name[0]}</span> ${name} te deve</span>
+        <span class="amt owed num">${BRL(amt)}</span>
+      </div>`).join('')}
+    </div>
+  </div>`:''}
+
   <div class="section-title"><h2>Lançamentos da fatura</h2><span class="pill ok">${tx.length}</span></div>
   <div class="card card-pad">
     ${tx.length? tx.map((x,i)=>`<div class="tx-row">
       <div class="tx-ic" style="background:${colorSoft(x.color)};color:${x.color==='lime'?'var(--lime-ink)':colorVar(x.color)}">${ic(x.icon)}</div>
-      <div class="tx-mid"><div class="t">${x.t}</div><div class="s">${x.cat||'Outros'}${x.date?` · ${String(x.date.day).padStart(2,'0')} ${x.date.month.toLowerCase()}`:''}</div></div>
+      <div class="tx-mid"><div class="t">${x.t}</div><div class="s">${x.cat||'Outros'}${x.date?` · ${String(x.date.day).padStart(2,'0')} ${x.date.month.toLowerCase()}`:''}</div>${x.owed>0?`<div class="s" style="color:var(--purple)">divide${x.owedBy?' · '+x.owedBy:''} te deve ${BRL(x.owed)}</div>`:''}</div>
       <div style="display:flex;align-items:center;gap:8px">
         <div class="tx-val neg num">${BRL(Math.abs(x.v))}</div>
         <button class="icon-mini cardTxDel" data-bank="${c.bank}" data-t="${encodeURIComponent(x.t)}" data-v="${x.v}" title="Remover">${ic('x')}</button>
@@ -1806,12 +1830,26 @@ function wireRouteExtras(){
   document.querySelectorAll('[data-cardidx]').forEach(b=>b.onclick=()=>{ state.activeCard=+b.dataset.cardidx; render(); });
   const addCardBtn=document.getElementById('addCardBtn'); if(addCardBtn) addCardBtn.onclick=openAddCardModal;
   const cardAdjust=document.getElementById('cardAdjustBtn'); if(cardAdjust) cardAdjust.onclick=()=>openAdjustFaturaModal(state.activeCard||0);
-  const cardAddTx=document.getElementById('cardAddTxBtn'); if(cardAddTx) cardAddTx.onclick=()=>openQuickAddModal();
+  const cardAddTx=document.getElementById('cardAddTxBtn'); if(cardAddTx) cardAddTx.onclick=()=>openCardTxModal(state.activeCard||0);
   document.querySelectorAll('.cardTxDel').forEach(b=>b.onclick=()=>{
     const bank=b.dataset.bank, t=decodeURIComponent(b.dataset.t), v=parseFloat(b.dataset.v);
     const idx=state.transactions.findIndex(x=>x.card===bank && x.t===t && x.v===v);
     if(idx>=0){ state.transactions.splice(idx,1); const c=state.cards.find(x=>x.bank===bank); if(c) c.balance=Math.max(0,c.balance-Math.abs(v)); }
     render();
+  });
+  // excluir qualquer transação (com confirmação e revertendo efeitos)
+  document.querySelectorAll('.txDel').forEach(b=>b.onclick=()=>{
+    const x=state.transactions[+b.dataset.i]; if(!x) return;
+    openModal(`<div class="modal-head"><h3>Excluir transação?</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
+      <p style="font-size:13.5px;color:var(--ink-dim);margin:0 0 16px">Remover <strong>${x.t}</strong> (${BRL(Math.abs(x.v))})?${x.card?` Isso também abate da fatura do ${x.card}.`:''}${(x.pos&&x.account)?' O valor sai do saldo da conta.':''}</p>
+      <div style="display:flex;gap:8px"><button class="btn ghost" style="flex:1" id="txDelCancel">Cancelar</button><button class="btn primary" style="flex:1;background:var(--red);color:#fff" id="txDelOk">Excluir</button></div>`);
+    document.getElementById('txDelCancel').onclick=closeModal;
+    document.getElementById('txDelOk').onclick=()=>{
+      if(x.card && !x.pos){ const c=state.cards.find(cc=>cc.bank===x.card); if(c) c.balance=Math.max(0,c.balance-Math.abs(x.v)); }
+      if(x.pos && x.account){ const a=(state.obBanks||[]).find(bk=>bk.key===x.account); if(a){ a.balance=(a.balance||0)-x.v; recalcAccounts(); } }
+      const idx=state.transactions.indexOf(x); if(idx>=0) state.transactions.splice(idx,1);
+      closeModal(); render();
+    };
   });
 
   // assistente Fin
@@ -1965,6 +2003,44 @@ function openAddIncomeModal(editIdx){
     if(!state.incomes) state.incomes=[];
     if(editing) state.incomes[editIdx]={...cur, name, val};
     else state.incomes.push({name, val, icon:'wallet'});
+    closeModal(); render();
+  };
+}
+
+function openCardTxModal(cardIdx){
+  const ci = Math.min(cardIdx||0, state.cards.length-1);
+  const c = state.cards[ci]; if(!c) return;
+  openModal(`
+    <div class="modal-head"><h3>Lançamento · ${c.bank}</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
+    <div class="form-row"><label>Valor total (R$)</label><input id="ctVal" type="number" step="0.01" placeholder="0,00"></div>
+    <div class="form-row"><label>Descrição</label><input id="ctDesc" placeholder="Ex: Ar-condicionado"></div>
+    <div class="form-row"><label>Categoria</label><div class="chip-select" id="ctCat">${CATEGORIES.map((c2,i)=>`<span class="opt ${i===0?'sel':''}" data-v="${c2.name}">${c2.name}</span>`).join('')}</div></div>
+    <div class="form-row"><label>Data</label><input id="ctDate" type="date" value="${TODAY_ISO}"></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-dim);margin:2px 2px 6px;cursor:pointer"><input type="checkbox" id="ctShared"> Dividir esta compra com alguém</label>
+    <div id="ctShareBox" style="display:none">
+      <div class="form-row"><label>Quem te deve? (opcional)</label><input id="ctWho" placeholder="Ex: Eduardo"></div>
+      <div class="form-row"><label>Quanto essa pessoa te deve (R$)</label><input id="ctOwed" type="number" step="0.01" placeholder="0,00"><div style="font-size:11.5px;color:var(--ink-faint);margin-top:5px">O valor cheio entra na fatura. Isto é só a parte que você vai receber de volta.</div></div>
+    </div>
+    <button class="btn primary" style="width:100%" id="ctSave">${ic('plus')} Adicionar à fatura</button>
+  `);
+  let cat=CATEGORIES[0].name;
+  document.querySelectorAll('#ctCat .opt').forEach(o=>o.onclick=()=>{ document.querySelectorAll('#ctCat .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); cat=o.dataset.v; });
+  const chk=document.getElementById('ctShared'), sb=document.getElementById('ctShareBox');
+  chk.onchange=()=>{ sb.style.display=chk.checked?'block':'none';
+    const owed=document.getElementById('ctOwed'); const tot=parseFloat(document.getElementById('ctVal').value)||0;
+    if(chk.checked && !owed.value && tot>0) owed.value=(tot/2).toFixed(2); // sugere metade
+  };
+  document.getElementById('ctSave').onclick=()=>{
+    const val=parseFloat(document.getElementById('ctVal').value)||0; if(val<=0){ document.getElementById('ctVal').style.borderColor='var(--red)'; return; }
+    const desc=document.getElementById('ctDesc').value.trim()||cat;
+    const dv=document.getElementById('ctDate').value||TODAY_ISO; const [,M,D]=dv.split('-').map(Number);
+    const date={day:D, month:MONTHS_ABBR[(M-1)]||TODAY.month};
+    const meta=catMeta(cat);
+    let owed=0, owedBy='';
+    if(chk.checked){ owed=Math.min(val, parseFloat(document.getElementById('ctOwed').value)||0); owedBy=document.getElementById('ctWho').value.trim(); }
+    c.balance += val;
+    state.transactions.unshift({ t:desc, s:`${cat} · Crédito · ${c.bank}`, v:-val, pos:false, icon:meta.icon, color:meta.color, cat, method:'Crédito', card:c.bank, owed, owedBy, date });
+    if(date.month===TODAY.month) state.selectedDay=date.day;
     closeModal(); render();
   };
 }
