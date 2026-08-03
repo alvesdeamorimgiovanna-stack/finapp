@@ -1703,21 +1703,19 @@ function cartoesView(){
   }
   const active = Math.min(state.activeCard||0, state.cards.length-1);
   const c = state.cards[active];
-  const tx = cardTx(c.bank);
-  const curTx = tx.filter(x=>!x.date || x.date.month===TODAY.month); // fatura do mês corrente
-  const sum = curTx.reduce((a,x)=>a+Math.abs(x.v),0);
-  const diff = Math.abs(sum - c.balance) > 0.5;
-  // próximas faturas (parcelas/lançamentos em meses futuros), ordenadas por proximidade
-  const futMap={};
-  tx.forEach(x=>{ if(!x.date) return; const mi=MONTHS_ABBR.indexOf(x.date.month); if(mi<0) return; const dist=(mi-TODAY.monthIdx+12)%12; if(dist>=1 && dist<=11){ if(!futMap[dist]) futMap[dist]={month:x.date.month, total:0, count:0}; futMap[dist].total+=Math.abs(x.v); futMap[dist].count++; } });
-  const futMonths=Object.keys(futMap).map(Number).sort((a,b)=>a-b);
-  const allShares = curTx.flatMap(x=>txShares(x)); // fatura atual (parcelas futuras vão em "Próximas faturas")
-  const owedUnpaid = allShares.filter(s=>!s.paid).reduce((a,s)=>a+s.amt,0);
-  const received = allShares.filter(s=>s.paid).reduce((a,s)=>a+s.amt,0);
-  const othersTotal = owedUnpaid + received;
-  const myReal = Math.max(0, c.balance - othersTotal);
+  if(state.cardMonth==null) state.cardMonth=TODAY.monthIdx;
+  const cm = ((state.cardMonth%12)+12)%12;
+  const isCurrent = cm===TODAY.monthIdx;
+  const monthTx = cardTx(c.bank).filter(x=>x.date && MONTHS_ABBR.indexOf(x.date.month)===cm);
+  const launchSum = monthTx.reduce((a,x)=>a+Math.abs(x.v),0);
+  const fatura = isCurrent ? c.balance : launchSum; // mês atual: fatura registrada; outros meses: soma dos lançamentos
+  const shares = monthTx.flatMap(x=>txShares(x));
+  const owedUnpaid = shares.filter(s=>!s.paid).reduce((a,s)=>a+s.amt,0);
+  const received = shares.filter(s=>s.paid).reduce((a,s)=>a+s.amt,0);
+  const owedAll = owedUnpaid + received;
+  const real = Math.max(0, fatura - owedAll);
   const byPerson = {};
-  allShares.forEach(s=>{ const k=s.name||'Alguém'; if(!byPerson[k]) byPerson[k]={owe:0,paid:0}; if(s.paid) byPerson[k].paid+=s.amt; else byPerson[k].owe+=s.amt; });
+  shares.forEach(s=>{ const k=s.name||'Alguém'; if(!byPerson[k]) byPerson[k]={owe:0,paid:0}; if(s.paid) byPerson[k].paid+=s.amt; else byPerson[k].owe+=s.amt; });
   const people = Object.entries(byPerson).sort((a,b)=>(b[1].owe+b[1].paid)-(a[1].owe+a[1].paid));
   return `
   <div class="section-title" style="margin-top:6px"><h2>Cartões</h2><button class="link" id="addCardBtn">+ cartão</button></div>
@@ -1727,31 +1725,31 @@ function cartoesView(){
   <div class="wcard cartao-hero" style="background:${c.bg};position:relative">
     <div class="brand-row"><div><div class="bank">${c.bank}</div><div class="kind">${c.kind}</div></div><div class="chip"></div></div>
     <div class="num" style="font-size:15px;letter-spacing:.16em;opacity:.9">•••• •••• •••• ${1000+active*731}</div>
-    <div class="bottom"><div><div class="amt-lbl">Fatura atual</div><div class="amt num">${BRL(c.balance)}</div></div>${ic('wallet')}</div>
+    <div class="bottom"><div><div class="amt-lbl">Fatura · ${MONTH_NAMES[cm]}</div><div class="amt num">${BRL(fatura)}</div></div>${ic('wallet')}</div>
   </div>
 
-  <div class="card card-pad" style="margin-top:14px">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:14px">
+    <button class="btn ghost" id="cardMonthPrev" style="padding:8px 14px">${ic('chevL')}</button>
+    <div style="font-weight:800;font-size:15px">${MONTH_NAMES[cm]}${isCurrent?' · atual':''}</div>
+    <button class="btn ghost" id="cardMonthNext" style="padding:8px 14px">${ic('chevR')}</button>
+  </div>
+
+  <div class="card card-pad" style="margin-top:12px">
     <div class="cartao-stats">
-      <div><div class="cs-k">Fatura registrada</div><div class="cs-v num">${BRL(c.balance)}</div></div>
-      <div><div class="cs-k">Soma (mês atual)</div><div class="cs-v num">${BRL(sum)}</div></div>
-      <div><div class="cs-k">Lançamentos</div><div class="cs-v num">${curTx.length}</div></div>
+      <div><div class="cs-k">Total da fatura</div><div class="cs-v num">${BRL(fatura)}</div></div>
+      <div><div class="cs-k">Seu gasto real</div><div class="cs-v num" style="color:var(--red)">${BRL(real)}</div></div>
+      ${owedAll>0?`<div><div class="cs-k">A receber</div><div class="cs-v num" style="color:var(--purple)">${BRL(owedUnpaid)}</div></div>`:''}
     </div>
-    ${diff?`<div class="cartao-warn">${ic('bell')} A soma dos lançamentos (${BRL(sum)}) não bate com a fatura registrada (${BRL(c.balance)}). Confira os itens ou ajuste a fatura.</div>`:`<div class="cartao-ok">${ic('check')} Fatura e lançamentos batem certinho.</div>`}
+    ${owedAll>0?`<p style="font-size:11.5px;color:var(--ink-faint);margin:10px 2px 0">Do total de ${BRL(fatura)}, ${BRL(owedAll)} é de outras pessoas — seu gasto real é ${BRL(real)}${received>0?` (já recebeu ${BRL(received)})`:''}.</p>`:''}
     <div style="display:flex;gap:8px;margin-top:12px">
-      <button class="btn ghost" id="cardAdjustBtn" style="flex:1">Ajustar fatura</button>
+      ${isCurrent?`<button class="btn ghost" id="cardAdjustBtn" style="flex:1">Ajustar fatura</button>`:''}
       <button class="btn primary" id="cardAddTxBtn" style="flex:1">${ic('plus')} Lançamento</button>
     </div>
   </div>
 
-  ${othersTotal>0?`<div class="card card-pad" style="margin-top:14px">
-    <div class="cartao-stats">
-      <div><div class="cs-k">Seu gasto real</div><div class="cs-v num" style="color:var(--red)">${BRL(myReal)}</div></div>
-      <div><div class="cs-k">A receber</div><div class="cs-v num" style="color:var(--purple)">${BRL(owedUnpaid)}</div></div>
-      <div><div class="cs-k">Já recebido</div><div class="cs-v num" style="color:var(--green-ink)">${BRL(received)}</div></div>
-    </div>
-    <div style="height:8px;border-radius:99px;background:var(--bg-soft);overflow:hidden;margin:12px 0 4px"><div style="height:100%;width:${othersTotal?Math.round(received/othersTotal*100):0}%;background:var(--green-ink)"></div></div>
-    <p style="font-size:11.5px;color:var(--ink-faint);margin:0 2px 0">Recebido ${BRL(received)} de ${BRL(othersTotal)}. A fatura cheia (${BRL(c.balance)}) é sua no vencimento; "seu gasto real" já desconta a parte dos outros.</p>
-    <div style="margin-top:12px;display:flex;flex-direction:column;gap:6px">
+  ${owedAll>0?`<div class="card card-pad" style="margin-top:14px">
+    <div class="section-title" style="margin-top:0"><h2 style="font-size:15px">Quem te deve · ${MONTH_NAMES[cm]}</h2></div>
+    <div style="display:flex;flex-direction:column;gap:6px">
       ${people.map(([name,v])=>`<div class="settle-row" style="padding:9px 0">
         <span class="who"><span class="mchip" style="position:static;margin:0;background:${memberColors[name]||'#8B5CF6'};color:#fff">${name[0]}</span> ${name}${v.paid>0?`<span style="font-size:11px;color:var(--green-ink);margin-left:6px">${ic('check')} ${BRL(v.paid)} pago</span>`:''}</span>
         <span style="display:flex;align-items:center;gap:8px">
@@ -1761,25 +1759,17 @@ function cartoesView(){
     </div>
   </div>`:''}
 
-  ${futMonths.length?`<div class="section-title"><h2>Próximas faturas</h2><span class="pill ok">parcelas</span></div>
-  <div class="card card-pad" style="display:flex;flex-direction:column;gap:2px">
-    ${futMonths.map(d=>{const f=futMap[d];return `<div class="settle-row" style="padding:10px 0">
-      <span class="who">${ic('cal')} ${f.month.charAt(0)+f.month.slice(1).toLowerCase()} <span style="color:var(--ink-faint);font-size:12px;margin-left:4px">${f.count} lançamento${f.count>1?'s':''}</span></span>
-      <span class="amt num">${BRL(f.total)}</span>
-    </div>`;}).join('')}
-    <p style="font-size:11.5px;color:var(--ink-faint);margin:8px 2px 0">Projeção das próximas faturas com base nas parcelas e lançamentos futuros deste cartão.</p>
-  </div>`:''}
-
-  <div class="section-title"><h2>Lançamentos da fatura</h2><span class="pill ok">${curTx.length}</span></div>
+  <div class="section-title"><h2>Lançamentos · ${MONTH_NAMES[cm]}</h2><span class="pill ok">${monthTx.length}</span></div>
   <div class="card card-pad">
-    ${curTx.length? curTx.map((x,i)=>`<div class="tx-row">
+    ${monthTx.length? monthTx.map((x)=>{const gi=state.transactions.indexOf(x);return `<div class="tx-row">
       <div class="tx-ic" style="background:${colorSoft(x.color)};color:${x.color==='lime'?'var(--lime-ink)':colorVar(x.color)}">${ic(x.icon)}</div>
       <div class="tx-mid"><div class="t">${x.t}</div><div class="s">${x.cat||'Outros'}${x.date?` · ${String(x.date.day).padStart(2,'0')} ${x.date.month.toLowerCase()}`:''}</div>${(()=>{const sh=txShares(x);if(!sh.length)return '';const un=sh.filter(s=>!s.paid).reduce((a,s)=>a+s.amt,0);const pd=sh.filter(s=>s.paid).reduce((a,s)=>a+s.amt,0);return `<div class="s" style="color:var(--purple)">divide · ${sh.length} pessoa(s)${un>0?' · a receber '+BRL(un):''}${pd>0?' · '+BRL(pd)+' recebido':''}</div>`;})()}</div>
-      <div style="display:flex;align-items:center;gap:8px">
+      <div style="display:flex;align-items:center;gap:6px">
         <div class="tx-val neg num">${BRL(Math.abs(x.v))}</div>
+        <button class="icon-mini cardTxEdit" data-i="${gi}" title="Editar">${ic('edit')}</button>
         <button class="icon-mini cardTxDel" data-bank="${c.bank}" data-t="${encodeURIComponent(x.t)}" data-v="${x.v}" title="Remover">${ic('x')}</button>
       </div>
-    </div>`).join('') : `<div class="empty">Nenhum lançamento neste cartão. Adicione um ou importe a fatura no perfil.</div>`}
+    </div>`;}).join('') : `<div class="empty">Nenhum lançamento em ${MONTH_NAMES[cm]}.</div>`}
   </div>`;
 }
 
@@ -1940,10 +1930,13 @@ function wireRouteExtras(){
   const addCardBtn=document.getElementById('addCardBtn'); if(addCardBtn) addCardBtn.onclick=openAddCardModal;
   const cardAdjust=document.getElementById('cardAdjustBtn'); if(cardAdjust) cardAdjust.onclick=()=>openAdjustFaturaModal(state.activeCard||0);
   const cardAddTx=document.getElementById('cardAddTxBtn'); if(cardAddTx) cardAddTx.onclick=()=>openCardTxModal(state.activeCard||0);
+  const cmPrev=document.getElementById('cardMonthPrev'); if(cmPrev) cmPrev.onclick=()=>{ if(state.cardMonth==null) state.cardMonth=TODAY.monthIdx; state.cardMonth=((state.cardMonth-1)%12+12)%12; render(); };
+  const cmNext=document.getElementById('cardMonthNext'); if(cmNext) cmNext.onclick=()=>{ if(state.cardMonth==null) state.cardMonth=TODAY.monthIdx; state.cardMonth=(state.cardMonth+1)%12; render(); };
+  document.querySelectorAll('.cardTxEdit').forEach(b=>b.onclick=()=>openEditCardTxModal(+b.dataset.i));
   document.querySelectorAll('.cardTxDel').forEach(b=>b.onclick=()=>{
     const bank=b.dataset.bank, t=decodeURIComponent(b.dataset.t), v=parseFloat(b.dataset.v);
     const idx=state.transactions.findIndex(x=>x.card===bank && x.t===t && x.v===v);
-    if(idx>=0){ state.transactions.splice(idx,1); const c=state.cards.find(x=>x.bank===bank); if(c) c.balance=Math.max(0,c.balance-Math.abs(v)); }
+    if(idx>=0){ const removed=state.transactions[idx]; state.transactions.splice(idx,1); const c=state.cards.find(x=>x.bank===bank); if(c && removed.date && MONTHS_ABBR.indexOf(removed.date.month)===TODAY.monthIdx) c.balance=Math.max(0,c.balance-Math.abs(v)); }
     render();
   });
   // cartão: dar baixa em quem pagou a parte dele
@@ -1956,7 +1949,7 @@ function wireRouteExtras(){
       <div style="display:flex;gap:8px"><button class="btn ghost" style="flex:1" id="txDelCancel">Cancelar</button><button class="btn primary" style="flex:1;background:var(--red);color:#fff" id="txDelOk">Excluir</button></div>`);
     document.getElementById('txDelCancel').onclick=closeModal;
     document.getElementById('txDelOk').onclick=()=>{
-      if(x.card && !x.pos){ const c=state.cards.find(cc=>cc.bank===x.card); if(c) c.balance=Math.max(0,c.balance-Math.abs(x.v)); }
+      if(x.card && !x.pos){ const c=state.cards.find(cc=>cc.bank===x.card); if(c && x.date && MONTHS_ABBR.indexOf(x.date.month)===TODAY.monthIdx) c.balance=Math.max(0,c.balance-Math.abs(x.v)); }
       if(x.pos && x.account){ const a=(state.obBanks||[]).find(bk=>bk.key===x.account); if(a){ a.balance=(a.balance||0)-x.v; recalcAccounts(); } }
       const idx=state.transactions.indexOf(x); if(idx>=0) state.transactions.splice(idx,1);
       closeModal(); render();
@@ -2217,6 +2210,37 @@ function openCardTxModal(cardIdx){
         if(pmonth===TODAY.month) c.balance += pval; // só a parcela do mês corrente entra na fatura atual
       }
     }
+    closeModal(); render();
+  };
+}
+
+function openEditCardTxModal(gi){
+  const x=state.transactions[gi]; if(!x) return;
+  const oldVal=Math.abs(x.v);
+  const oldMi = x.date? MONTHS_ABBR.indexOf(x.date.month) : TODAY.monthIdx;
+  const oldDay = x.date? x.date.day : TODAY.day;
+  const iso = `${state.calYear||2026}-${String(oldMi+1).padStart(2,'0')}-${String(oldDay).padStart(2,'0')}`;
+  openModal(`
+    <div class="modal-head"><h3>Editar lançamento</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
+    <div class="form-row"><label>Descrição</label><input id="etDesc" value="${(x.t||'').replace(/"/g,'&quot;')}"></div>
+    <div class="form-row"><label>Valor (R$)</label><input id="etVal" type="number" step="0.01" value="${oldVal}"></div>
+    <div class="form-row"><label>Data (define o mês da fatura)</label><input id="etDate" type="date" value="${iso}"></div>
+    <button class="btn primary" style="width:100%" id="etSave">Salvar</button>
+  `);
+  document.getElementById('etSave').onclick=()=>{
+    const nv=parseFloat(document.getElementById('etVal').value)||0; if(nv<=0){ document.getElementById('etVal').style.borderColor='var(--red)'; return; }
+    const desc=document.getElementById('etDesc').value.trim()||x.t;
+    const dv=document.getElementById('etDate').value||iso; const [,M,D]=dv.split('-').map(Number);
+    const newMi=(M-1);
+    const c=state.cards.find(cc=>cc.bank===x.card);
+    if(c){
+      const oldEff=(oldMi===TODAY.monthIdx)?oldVal:0;
+      const newEff=(newMi===TODAY.monthIdx)?nv:0;
+      c.balance=Math.max(0, c.balance - oldEff + newEff);
+    }
+    x.t=desc; x.v=-nv; x.date={day:D, month:MONTHS_ABBR[newMi]||(x.date&&x.date.month)||TODAY.month};
+    txShares(x).forEach(s=>{ if(s.amt>nv) s.amt=nv; });
+    x.owed=txShares(x).reduce((a,s)=>a+s.amt,0);
     closeModal(); render();
   };
 }
