@@ -1513,7 +1513,7 @@ function askFin(raw){
   const t = totals();
   const sharesSum = x => txShares(x).reduce((s,sh)=>s+sh.amt,0);
   const cardName = chatDetectCard(q);
-  const mentionsCredit = /credito|cartao/.test(q);
+  const mentionsCredit = /credito|credit|cartao|cartoes|cartinh/.test(q);
   const tf = chatTimeFilter(q);
   const cd = chatDetectCat(q);
 
@@ -1548,19 +1548,30 @@ function askFin(raw){
     return {text: rec>0 ? `Você já recebeu ${BRL(rec)} de divisões de compras.` : 'Você ainda não marcou nenhum recebimento de divisão.'};
   }
 
-  // GASTO REAL (sua parte, descontando o que os outros te devem)
-  if(/gasto real|gastei de verdade|minha parte|de verdade (foi|gastei)|realmente gastei|foi meu mesmo|so o meu/.test(q)){
+  // CARTÃO DE CRÉDITO: fatura / gasto / gasto real — usa a FATURA de cada cartão
+  // (assim pega TODOS os cartões, inclusive os que têm fatura sem lançamentos avulsos)
+  if((cardName || mentionsCredit) && !cd && /(gast|fatura|cartao|paguei|real|quanto|devo|dever)/.test(q)){
+    if(!state.cards.length) return {text:'Você ainda não tem cartões cadastrados. Adicione na aba Cartões.'};
+    const bd=(state.cards||[]).filter(c=>!cardName||c.bank===cardName).map(c=>{
+      const owed=cardTx(c.bank).reduce((a,x)=>a+sharesSum(x),0);
+      return {bank:c.bank, fatura:c.balance||0, owed, real:Math.max(0,(c.balance||0)-owed)};
+    });
+    const totFat=bd.reduce((a,c)=>a+c.fatura,0);
+    const totOwed=bd.reduce((a,c)=>a+c.owed,0);
+    const totReal=bd.reduce((a,c)=>a+c.real,0);
+    if(/real|de verdade|minha parte|so o meu|meu mesmo/.test(q)){
+      return {text:`Seu gasto real${cardName?` no ${cardName}`:' somando todos os cartões'} é ${BRL(totReal)}${totOwed>0?` — a fatura cheia é ${BRL(totFat)}, sendo ${BRL(totOwed)} de outras pessoas`:''}.`, list:bd.map(c=>[c.bank, BRL(c.real)])};
+    }
+    return {text:`${cardName?`A fatura do ${cardName} é`:'Suas faturas somam'} ${BRL(totFat)}${totOwed>0?` (seu gasto real: ${BRL(totReal)}; ${BRL(totOwed)} outras pessoas te devem)`:''}:`, list:bd.map(c=>[c.bank, BRL(c.fatura)])};
+  }
+  // GASTO REAL geral (fora de cartão) — desconta as divisões
+  if(/gasto real|gastei de verdade|minha parte|realmente gastei|de verdade (foi|gastei)/.test(q)){
     let tx=(state.transactions||[]).filter(x=>!x.pos && tf.test(x.date));
-    if(cardName) tx=tx.filter(x=>x.card===cardName);
-    else if(mentionsCredit) tx=tx.filter(x=>x.method==='Crédito');
     if(cd) tx=tx.filter(x=> x.cat===cd.cat || CHAT_SYN[cd.cat].some(w=>norm(x.t).includes(w)));
     const gross=tx.reduce((a,x)=>a+Math.abs(x.v),0);
     const others=tx.reduce((a,x)=>a+sharesSum(x),0);
-    const real=Math.max(0, gross-others);
-    const onde = cardName?` no ${cardName}` : (mentionsCredit?' no cartão de crédito':'');
-    if(!tx.length) return {text:`Não achei gastos${onde} ${tf.label}. 🙂`};
-    const extra = others>0 ? ` (do total de ${BRL(gross)}, ${BRL(others)} é de outras pessoas)` : '';
-    return {text:`Seu gasto real${onde} ${tf.label} foi ${BRL(real)}${extra}.`};
+    if(!tx.length) return {text:`Não achei gastos ${tf.label}. 🙂`};
+    return {text:`Seu gasto real ${tf.label} foi ${BRL(Math.max(0,gross-others))}${others>0?` (do total de ${BRL(gross)}, ${BRL(others)} é de outras pessoas)`:''}.`};
   }
 
   // renda
@@ -1596,13 +1607,6 @@ function askFin(raw){
     }
     return {text:`Seu saldo disponível ${state.monthLabel.split(' ')[0]} é ${BRL(t.balance)}.`, list:[['Entradas', BRL(t.incomeTotal)],['Gastos fixos', '−'+BRL(t.fixedTotal)],['Gastos variáveis', '−'+BRL(t.varTotal)]]};
   }
-  // fatura de cartão
-  if((cardName||mentionsCredit) && /(fatura|cartao)/.test(q) && !/gast|paguei|real/.test(q)){
-    if(cardName){ const c=state.cards.find(x=>x.bank===cardName); return {text:`A fatura atual do ${cardName} é ${BRL(c.balance)}.`}; }
-    const totalFat=(state.cards||[]).reduce((a,c)=>a+(c.balance||0),0);
-    if(!state.cards.length) return {text:'Você ainda não tem cartões cadastrados.'};
-    return {text:`Suas faturas somam ${BRL(totalFat)}:`, list:state.cards.map(c=>[c.bank, BRL(c.balance)])};
-  }
   // onde gasto mais
   if(/onde.*(gast|dinheiro)|maiores categorias|por categoria|em que.*gast|com o que.*gast/.test(q)){
     const cats = categorySpending();
@@ -1612,7 +1616,7 @@ function askFin(raw){
   // gastos (com categoria/tempo/cartão) — inclui "maior gasto"
   let tx = (state.transactions||[]).filter(x=>!x.pos && tf.test(x.date));
   if(cardName) tx = tx.filter(x=>x.card===cardName);
-  else if(mentionsCredit) tx = tx.filter(x=>x.method==='Crédito');
+  else if(mentionsCredit) tx = tx.filter(x=>x.card||x.method==='Crédito');
   if(cd) tx = tx.filter(x=> x.cat===cd.cat || CHAT_SYN[cd.cat].some(w=>norm(x.t).includes(w)));
   const subjectLabel = cd ? (norm(cd.cat)===cd.term ? cd.cat.toLowerCase() : cd.term) : '';
   const subject = cd? ` com ${subjectLabel}` : '';
