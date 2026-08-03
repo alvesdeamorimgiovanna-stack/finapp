@@ -1708,6 +1708,8 @@ function cartoesView(){
   const isCurrent = cm===TODAY.monthIdx;
   // no mês atual mostramos também lançamentos sem data (legados) pra nada sumir
   const monthTx = cardTx(c.bank).filter(x=> isCurrent ? (!x.date || MONTHS_ABBR.indexOf(x.date.month)===cm) : (x.date && MONTHS_ABBR.indexOf(x.date.month)===cm));
+  const showAll = !!state.cardShowAll;
+  const listTx = showAll ? cardTx(c.bank) : monthTx;
   const launchSum = monthTx.reduce((a,x)=>a+Math.abs(x.v),0);
   const fatura = isCurrent ? c.balance : launchSum; // mês atual: fatura registrada; outros meses: soma dos lançamentos
   const shares = monthTx.flatMap(x=>txShares(x));
@@ -1760,9 +1762,9 @@ function cartoesView(){
     </div>
   </div>`:''}
 
-  <div class="section-title"><h2>Lançamentos · ${MONTH_NAMES[cm]}</h2><span class="pill ok">${monthTx.length}</span></div>
+  <div class="section-title"><h2>Lançamentos${showAll?'':' · '+MONTH_NAMES[cm]}</h2><button class="link" id="cardShowAllBtn">${showAll?'ver por mês':'ver todos'}</button></div>
   <div class="card card-pad">
-    ${monthTx.length? monthTx.map((x)=>{const gi=state.transactions.indexOf(x);return `<div class="tx-row">
+    ${listTx.length? listTx.map((x)=>{const gi=state.transactions.indexOf(x);return `<div class="tx-row">
       <div class="tx-ic" style="background:${colorSoft(x.color)};color:${x.color==='lime'?'var(--lime-ink)':colorVar(x.color)}">${ic(x.icon)}</div>
       <div class="tx-mid"><div class="t">${x.t}</div><div class="s">${x.cat||'Outros'}${x.date?` · ${String(x.date.day).padStart(2,'0')} ${x.date.month.toLowerCase()}`:''}</div>${(()=>{const sh=txShares(x);if(!sh.length)return '';const un=sh.filter(s=>!s.paid).reduce((a,s)=>a+s.amt,0);const pd=sh.filter(s=>s.paid).reduce((a,s)=>a+s.amt,0);return `<div class="s" style="color:var(--purple)">divide · ${sh.length} pessoa(s)${un>0?' · a receber '+BRL(un):''}${pd>0?' · '+BRL(pd)+' recebido':''}</div>`;})()}</div>
       <div style="display:flex;align-items:center;gap:6px">
@@ -1770,7 +1772,7 @@ function cartoesView(){
         <button class="icon-mini cardTxEdit" data-i="${gi}" title="Editar">${ic('edit')}</button>
         <button class="icon-mini cardTxDel" data-bank="${c.bank}" data-t="${encodeURIComponent(x.t)}" data-v="${x.v}" title="Remover">${ic('x')}</button>
       </div>
-    </div>`;}).join('') : `<div class="empty">Nenhum lançamento em ${MONTH_NAMES[cm]}.</div>`}
+    </div>`;}).join('') : `<div class="empty">Nenhum lançamento em ${MONTH_NAMES[cm]}. Toque em <strong>ver todos</strong> pra ver de todos os meses.</div>`}
   </div>`;
 }
 
@@ -1933,6 +1935,7 @@ function wireRouteExtras(){
   const cardAddTx=document.getElementById('cardAddTxBtn'); if(cardAddTx) cardAddTx.onclick=()=>openCardTxModal(state.activeCard||0);
   const cmPrev=document.getElementById('cardMonthPrev'); if(cmPrev) cmPrev.onclick=()=>{ if(state.cardMonth==null) state.cardMonth=TODAY.monthIdx; state.cardMonth=((state.cardMonth-1)%12+12)%12; render(); };
   const cmNext=document.getElementById('cardMonthNext'); if(cmNext) cmNext.onclick=()=>{ if(state.cardMonth==null) state.cardMonth=TODAY.monthIdx; state.cardMonth=(state.cardMonth+1)%12; render(); };
+  const showAllBtn=document.getElementById('cardShowAllBtn'); if(showAllBtn) showAllBtn.onclick=()=>{ state.cardShowAll=!state.cardShowAll; render(); };
   document.querySelectorAll('.cardTxEdit').forEach(b=>b.onclick=()=>openEditCardTxModal(+b.dataset.i));
   document.querySelectorAll('.cardTxDel').forEach(b=>b.onclick=()=>{
     const bank=b.dataset.bank, t=decodeURIComponent(b.dataset.t), v=parseFloat(b.dataset.v);
