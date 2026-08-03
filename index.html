@@ -1040,6 +1040,9 @@ function quickAddForm(){
       <div class="qa-field"><label>Fonte (opcional)</label>
         <div class="chip-select qaSource">${sources.length? sources.map(i=>`<span class="opt" data-v="${i.name}">${i.name}</span>`).join('') : '<span style="font-size:12px;color:var(--ink-faint)">Cadastre suas rendas em Configurações — ou só descreva abaixo.</span>'}</div>
       </div>
+      <div class="qa-field"><label>Entrou em qual conta?</label>
+        <div class="chip-select qaInAccount">${(state.obBanks||[]).length ? (state.obBanks||[]).map((b,idx)=>`<span class="opt ${idx===0?'sel':''}" data-v="${b.key}">${b.name}</span>`).join('')+`<span class="opt" data-v="">Não somar</span>` : '<span style="font-size:12px;color:var(--ink-faint)">Cadastre uma conta em Ajustes → Minhas contas para somar ao saldo.</span>'}</div>
+      </div>
     </div>
     <div class="qa-field"><label>Descrição (opcional)</label><input class="qaDesc" placeholder="Ex: almoço com amigos" autocomplete="off"></div>
     <div class="qa-expense">
@@ -1111,7 +1114,7 @@ function groupsView(){
     <span class="pill ok">${ic('lock')} Conta transitória</span>
   </div>
   <p style="font-size:12.5px;color:var(--ink-faint);margin:-4px 0 16px;max-width:52ch">
-    Gastos de grupo ficam isolados aqui — eles não somam nem contaminam seu saldo pessoal na Home.
+    Gastos de grupo ficam isolados aqui — não entram no seu saldo pessoal. Ao dar baixa (&ldquo;Recebi&rdquo;/&ldquo;Paguei&rdquo;) você escolhe atualizar uma conta ou deixar como só transação (&ldquo;Não somar&rdquo;).
   </p>
   <div class="bento">
     ${state.groups.map(g=>{
@@ -1160,6 +1163,7 @@ function groupDetailView(id){
       <div class="group-ic" style="background:${g.color}">${g.name[0]}</div>
       <div style="flex:1"><h3 style="font-size:18px;margin:0">${g.name}</h3><div class="sub">${BRL(g.expenses.reduce((a,b)=>a+b.total,0))} no total${g.settleBy?` · acerto até dia ${g.settleBy}`:''}</div></div>
       <button class="icon-mini" id="editGroupDue" title="Definir prazo de acerto">${ic('cal')}</button>
+      <button class="icon-mini" id="delGroupBtn" title="Excluir grupo" style="color:var(--red)">${ic('x')}</button>
     </div>
 
     <div class="section-title"><h2>Quem deve pra quem</h2></div>
@@ -1724,7 +1728,7 @@ function wireThemeToggle(){
 function wireQuickAdd(box, inModal){
   if(!box) return;
   const single = (sel)=> box.querySelectorAll(sel+' .opt').forEach(o=>o.onclick=()=>{ box.querySelectorAll(sel+' .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); });
-  single('.qaCat'); single('.qaCard'); single('.qaSource');
+  single('.qaCat'); single('.qaCard'); single('.qaSource'); single('.qaInAccount');
   // alternar Gasto / Entrada
   box.querySelectorAll('.qa-mode-btn').forEach(b=>b.onclick=()=>{
     const mode=b.dataset.mode;
@@ -1752,7 +1756,9 @@ function wireQuickAdd(box, inModal){
     if(mode==='in'){
       const source = box.querySelector('.qaSource .opt.sel')?.dataset.v || '';
       const label = desc || source || 'Entrada';
-      state.transactions.unshift({ t:label, s:`Entrada${source?' · '+source:''}`, v:val, pos:true, icon:'up', color:'lime', cat:'Entrada', method:'—', card:'', date });
+      const acctKey = box.querySelector('.qaInAccount .opt.sel')?.dataset.v || '';
+      if(acctKey){ const acc=(state.obBanks||[]).find(b=>b.key===acctKey); if(acc){ acc.balance=(acc.balance||0)+val; recalcAccounts(); } }
+      state.transactions.unshift({ t:label, s:`Entrada${source?' · '+source:''}`, v:val, pos:true, icon:'up', color:'lime', cat:'Entrada', method:'—', card:'', account:acctKey, date });
     } else {
       const cat = box.querySelector('.qaCat .opt.sel')?.dataset.v || 'Outros';
       const method = box.querySelector('.qaMethod .opt.sel')?.dataset.v || 'Débito';
@@ -1823,16 +1829,23 @@ function wireRouteExtras(){
   if(newGroupBtn) newGroupBtn.onclick = openNewGroupModal;
   const addExpenseBtn = document.getElementById('addExpenseBtn');
   if(addExpenseBtn) addExpenseBtn.onclick = ()=>openAddExpenseModal(state.activeGroup);
-  // dar baixa em quem pagou / paguei
+  // dar baixa em quem pagou / paguei — abre modal p/ escolher conta ou "não somar"
   document.querySelectorAll('.settleBtn').forEach(b=>b.onclick=()=>{
-    const g = state.groups.find(x=>x.id===state.activeGroup); if(!g) return;
-    if(!g.settlements) g.settlements=[];
-    g.settlements.push({from:b.dataset.from, to:b.dataset.to||'Eu', amt:parseFloat(b.dataset.amt)});
-    render();
+    openSettleModal(b.dataset.from, b.dataset.to||'Eu', parseFloat(b.dataset.amt));
   });
   // definir/editar prazo de acerto
   const editDue = document.getElementById('editGroupDue');
   if(editDue) editDue.onclick = ()=>openGroupDueModal(state.activeGroup);
+  // excluir grupo
+  const delG = document.getElementById('delGroupBtn');
+  if(delG) delG.onclick = ()=>{
+    const g = state.groups.find(x=>x.id===state.activeGroup); if(!g) return;
+    openModal(`<div class="modal-head"><h3>Excluir grupo?</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
+      <p style="font-size:13.5px;color:var(--ink-dim);margin:0 0 16px">Isso remove o grupo <strong>${g.name}</strong> e todas as despesas dele. Não afeta seu saldo pessoal. Não dá pra desfazer.</p>
+      <div style="display:flex;gap:8px"><button class="btn ghost" style="flex:1" id="delGCancel">Cancelar</button><button class="btn primary" style="flex:1;background:var(--red);color:#fff" id="delGConfirm">Excluir grupo</button></div>`);
+    document.getElementById('delGCancel').onclick=closeModal;
+    document.getElementById('delGConfirm').onclick=()=>{ state.groups=state.groups.filter(x=>x.id!==g.id); closeModal(); state.route='grupos'; render(); };
+  };
 
   // wallet cycle
   const wrap = document.getElementById('walletWrap');
@@ -1952,6 +1965,31 @@ function openAddIncomeModal(editIdx){
     if(!state.incomes) state.incomes=[];
     if(editing) state.incomes[editIdx]={...cur, name, val};
     else state.incomes.push({name, val, icon:'wallet'});
+    closeModal(); render();
+  };
+}
+
+function openSettleModal(from, to, amt){
+  const g = state.groups.find(x=>x.id===state.activeGroup); if(!g) return;
+  const receiving = (to==='Eu');
+  const verb = receiving ? 'Recebi' : 'Paguei';
+  const dirLabel = receiving ? 'Entrou em qual conta?' : 'Saiu de qual conta?';
+  const noLabel = receiving ? 'Não somar' : 'Não descontar';
+  const banks = state.obBanks||[];
+  openModal(`
+    <div class="modal-head"><h3>${verb} · ${BRL(amt)}</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
+    <p style="font-size:13px;color:var(--ink-faint);margin:0 0 12px">${receiving?`${from} te pagou ${BRL(amt)}.`:`Você pagou ${BRL(amt)} para ${to}.`} Escolha se isso mexe no seu saldo.</p>
+    <div class="form-row"><label>${dirLabel}</label><div class="chip-select" id="stAccount">
+      ${banks.length ? banks.map((b,idx)=>`<span class="opt ${idx===0?'sel':''}" data-k="${b.key}">${b.name}</span>`).join('')+`<span class="opt" data-k="">${noLabel}</span>` : `<span class="opt sel" data-k="">${noLabel}</span><span style="font-size:12px;color:var(--ink-faint);display:block;margin-top:6px">Cadastre contas em Ajustes → Minhas contas para atualizar o saldo.</span>`}
+    </div></div>
+    <button class="btn primary" style="width:100%" id="stSave">${ic('check')} Confirmar</button>
+  `);
+  let stKey=banks.length?banks[0].key:'';
+  document.querySelectorAll('#stAccount .opt').forEach(o=>o.onclick=()=>{ document.querySelectorAll('#stAccount .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); stKey=o.dataset.k; });
+  document.getElementById('stSave').onclick=()=>{
+    if(!g.settlements) g.settlements=[];
+    g.settlements.push({from, to, amt});
+    if(stKey){ const acc=banks.find(b=>b.key===stKey); if(acc){ acc.balance=(acc.balance||0)+(receiving?amt:-amt); recalcAccounts(); } }
     closeModal(); render();
   };
 }
