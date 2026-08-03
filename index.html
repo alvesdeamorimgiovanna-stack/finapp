@@ -1533,8 +1533,17 @@ function askFin(raw){
       ['Metas','quanto falta pra cada uma'],
     ]};
 
-  // quem me deve / a receber
-  if(/quem.*(me )?deve|me devem|a receber|falta receber|quanto.*(me )?devem|tenho pra receber/.test(q)){
+  // quanto UMA PESSOA me deve (ex: "quanto o Eduardo me deve")
+  const debtorNames=[...new Set([].concat(...(state.transactions||[]).map(x=>txShares(x).map(s=>s.name||'Alguém'))))].filter(Boolean);
+  const personHit=debtorNames.find(n=>q.includes(norm(n)));
+  if(personHit && /deve|dev|receber|pagou|pagar|falta|quitad/.test(q)){
+    let unpaid=0,paid=0;
+    (state.transactions||[]).forEach(x=>txShares(x).forEach(s=>{ if((s.name||'Alguém')===personHit){ if(s.paid) paid+=s.amt; else unpaid+=s.amt; } }));
+    if(unpaid<=0 && paid<=0) return {text:`${personHit} não tem nada registrado com você.`};
+    return {text:`${personHit} ${unpaid>0?`te deve ${BRL(unpaid)}`:'está quitado ✅'}${paid>0?` — já te pagou ${BRL(paid)}`:''}.`};
+  }
+  // quem me deve / a receber (geral)
+  if(/quem.*deve|me deve|me devem|a receber|falta receber|tenho pra receber|quem (ta|esta) devendo|quanto.*deve/.test(q)){
     const byP={};
     (state.transactions||[]).forEach(x=>{ txShares(x).forEach(s=>{ if(!s.paid){ byP[s.name||'Alguém']=(byP[s.name||'Alguém']||0)+s.amt; } }); });
     const entries=Object.entries(byP).filter(([,v])=>v>0.01).sort((a,b)=>b[1]-a[1]);
