@@ -684,7 +684,7 @@ function ic(name,cls){ return `<span class="${cls||''}" style="display:inline-fl
    ============================================================ */
 const MONTHS_ABBR = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const APP_VERSION = 'v15 · parcelas+meses';
+const APP_VERSION = 'v16 · recebi por mês';
 const TODAY = { day:24, monthIdx:6, month:'JUL' }; // 24 jul 2026 (demo "hoje")
 const TODAY_ISO = '2026-07-24';
 const CATEGORIES = [
@@ -2252,14 +2252,18 @@ function openEditCardTxModal(gi){
 }
 
 function openReceiveModal(bank, name){
+  // só marca a parte DAQUELE mês (parcelas de outros meses ficam pra quando você abrir aquele mês)
+  const cm = state.cardMonth==null?TODAY.monthIdx:((state.cardMonth%12)+12)%12;
+  const isCurrent = cm===TODAY.monthIdx;
+  const inMonth = x => x.card===bank && !x.pos && (isCurrent ? (!x.date || MONTHS_ABBR.indexOf(x.date.month)===cm) : (x.date && MONTHS_ABBR.indexOf(x.date.month)===cm));
   const entries=[];
-  (state.transactions||[]).forEach(x=>{ if(x.card===bank && !x.pos){ txShares(x).forEach(s=>{ if((s.name||'Alguém')===name && !s.paid) entries.push(s); }); } });
+  (state.transactions||[]).forEach(x=>{ if(inMonth(x)){ txShares(x).forEach(s=>{ if((s.name||'Alguém')===name && !s.paid) entries.push(s); }); } });
   const amt=entries.reduce((a,s)=>a+s.amt,0);
   if(amt<=0) return;
   const banks=state.obBanks||[];
   openModal(`
     <div class="modal-head"><h3>Recebi de ${name} · ${BRL(amt)}</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
-    <p style="font-size:13px;color:var(--ink-faint);margin:0 0 12px">Marcar ${BRL(amt)} como recebido de ${name}. Escolha se cai numa conta.</p>
+    <p style="font-size:13px;color:var(--ink-faint);margin:0 0 12px">Marcar ${BRL(amt)} de ${name} referente a <strong>${MONTH_NAMES[cm]}</strong> como recebido. Escolha se cai numa conta.</p>
     <div class="form-row"><label>Entrou em qual conta?</label><div class="chip-select" id="rcAccount">
       ${banks.length ? banks.map((b,idx)=>`<span class="opt ${idx===0?'sel':''}" data-k="${b.key}">${b.name}</span>`).join('')+`<span class="opt" data-k="">Não somar</span>` : `<span class="opt sel" data-k="">Não somar</span>`}
     </div></div>
