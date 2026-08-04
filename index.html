@@ -684,7 +684,7 @@ function ic(name,cls){ return `<span class="${cls||''}" style="display:inline-fl
    ============================================================ */
 const MONTHS_ABBR = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const APP_VERSION = 'v19 · gastos só a sua parte';
+const APP_VERSION = 'v20 · metas vinculadas';
 const TODAY = { day:24, monthIdx:6, month:'JUL' }; // 24 jul 2026 (demo "hoje")
 const TODAY_ISO = '2026-07-24';
 const CATEGORIES = [
@@ -769,6 +769,7 @@ function recalcAccounts(){
    RENDER: SHELL
    ============================================================ */
 function render(){
+  ensureInvIds();
   const app = document.getElementById('app');
   app.innerHTML = `
     ${topbar()}
@@ -1010,24 +1011,31 @@ function fmtDeadline(d){
   return `${MONTH_NAMES[m-1]} de ${y}`;
 }
 function goalRow(g,i){
-  const pct = Math.min(100, g.target>0 ? (g.saved/g.target*100) : 0);
-  const remaining = Math.max(0, g.target-g.saved);
+  const saved = goalSaved(g);
+  const pct = Math.min(100, g.target>0 ? (saved/g.target*100) : 0);
+  const remaining = Math.max(0, g.target-saved);
   const dl = fmtDeadline(g.deadline);
+  const link = goalLinkLabel(g);
+  const isAccount = g.linkType==='account';
   return `<div class="goal-row">
     <div class="goal-row-top">
       <div class="grt-name">${ic('target')} ${g.name}</div>
       <div style="display:flex;gap:6px;align-items:center">
         <span class="pill lime">${pct.toFixed(0)}%</span>
+        <button class="icon-mini goalEdit" data-i="${i}" title="Editar meta">${ic('edit')}</button>
         <button class="icon-mini goalDel" data-i="${i}" title="Remover meta">${ic('x')}</button>
       </div>
     </div>
-    <div class="goal-amt num" style="font-size:20px;margin-top:8px">${BRL(g.saved)} <span>de ${BRL(g.target)}</span></div>
+    <div class="goal-amt num" style="font-size:20px;margin-top:8px">${BRL(saved)} <span>de ${BRL(g.target)}</span></div>
     <div class="bar-track"><div class="bar-seg" style="width:${pct}%;background:var(--purple)"></div></div>
     <div class="goal-meta-line">
       <span>Faltam <strong class="num">${BRL(remaining)}</strong></span>
       ${dl?`<span>${ic('cal')} ${dl}</span>`:''}
     </div>
-    <button class="btn ghost goalAport" data-i="${i}" style="margin-top:10px;padding:8px 14px;font-size:12.5px">${ic('plus')} Registrar aporte</button>
+    ${link?`<div style="font-size:11.5px;color:var(--purple);margin-top:6px">${ic('bank')} acompanha ${link}</div>`:''}
+    ${isAccount
+      ? `<div style="font-size:11.5px;color:var(--ink-faint);margin-top:8px">O progresso segue o saldo dessa conta. Pra guardar mais, adicione uma entrada nela.</div>`
+      : `<button class="btn ghost goalAport" data-i="${i}" style="margin-top:10px;padding:8px 14px;font-size:12.5px">${ic('plus')} Registrar aporte</button>`}
   </div>`;
 }
 
@@ -1705,6 +1713,19 @@ function txShares(x){
 function shareRecv(s){ return s.received!=null ? s.received : (s.paid ? s.amt : 0); }
 // a SUA parte de um gasto = valor cheio menos o que os outros te devem (divisão)
 function myPart(x){ return Math.max(0, Math.abs(x.v) - txShares(x).reduce((a,s)=>a+s.amt,0)); }
+// garante um id em cada investimento (pra metas conseguirem apontar pra ele)
+function ensureInvIds(){ (state.investments||[]).forEach(i=>{ if(!i.id) i.id='inv'+Date.now().toString(36)+Math.floor(Math.random()*1e5).toString(36); }); }
+// quanto uma meta já tem guardado — pode vir de uma conta, de um investimento, ou manual
+function goalSaved(g){
+  if(g.linkType==='account'){ const a=(state.obBanks||[]).find(b=>b.key===g.linkId); return a?(a.balance||0):0; }
+  if(g.linkType==='investment'){ const inv=(state.investments||[]).find(x=>x.id===g.linkId); return inv?(inv.amount||0):0; }
+  return g.saved||0;
+}
+function goalLinkLabel(g){
+  if(g.linkType==='account'){ const a=(state.obBanks||[]).find(b=>b.key===g.linkId); return a?('a conta '+a.name):'(conta removida)'; }
+  if(g.linkType==='investment'){ const inv=(state.investments||[]).find(x=>x.id===g.linkId); return inv?('o investimento '+inv.name):'(investimento removido)'; }
+  return '';
+}
 function cartoesView(){
   if(!state.cards.length){
     return `<div class="section-title" style="margin-top:6px"><h2>Cartões</h2></div>
@@ -1921,6 +1942,7 @@ function wireRouteExtras(){
   const addGoalBtn = document.getElementById('addGoalBtn');
   if(addGoalBtn) addGoalBtn.onclick = openAddGoalModal;
   document.querySelectorAll('.goalAport').forEach(b=>b.onclick=()=>openAportModal(+b.dataset.i));
+  document.querySelectorAll('.goalEdit').forEach(b=>b.onclick=(e)=>{ e.stopPropagation(); openAddGoalModal(+b.dataset.i); });
   document.querySelectorAll('.goalDel').forEach(b=>b.onclick=(e)=>{ e.stopPropagation(); state.goals.splice(+b.dataset.i,1); render(); });
 
   // rendas
@@ -2082,7 +2104,7 @@ function openAddInvestmentModal(){
     if(amount<=0) return;
     if(!state.investments) state.investments=[];
     if(fromKey){ const acc=(state.obBanks||[]).find(b=>b.key===fromKey); if(acc){ acc.balance=(acc.balance||0)-amount; recalcAccounts(); } }
-    state.investments.unshift({name, inst, type, amount, ret, fromKey});
+    state.investments.unshift({id:'inv'+Date.now().toString(36)+Math.floor(Math.random()*1e5).toString(36), name, inst, type, amount, ret, fromKey});
     closeModal(); render();
   };
 }
@@ -2126,23 +2148,47 @@ function openFixoDetail(){
     <div class="settle-row" style="border-top:2px solid var(--line);margin-top:4px"><span class="who" style="font-weight:800">Total</span><span class="amt num" style="font-weight:800">${BRL(total)}</span></div>
   `);
 }
-function openAddGoalModal(){
+function openAddGoalModal(editIdx){
+  ensureInvIds();
+  const editing = editIdx!=null && state.goals[editIdx];
+  const g = editing ? state.goals[editIdx] : {name:'',target:'',saved:'',deadline:'',linkType:'manual',linkId:''};
+  const banks=state.obBanks||[]; const invs=state.investments||[];
   openModal(`
-    <div class="modal-head"><h3>Nova meta</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
-    <div class="form-row"><label>Nome da meta</label><input id="glName" placeholder="Ex: Comprar um carro"></div>
+    <div class="modal-head"><h3>${editing?'Editar meta':'Nova meta'}</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
+    <div class="form-row"><label>Nome da meta</label><input id="glName" value="${(g.name||'').replace(/"/g,'&quot;')}" placeholder="Ex: Reserva financeira"></div>
     <div class="form-row"><label>Valor alvo</label><input id="glTarget" type="text" placeholder="R$ 30.000,00"></div>
-    <div class="form-row"><label>Já guardei — opcional</label><input id="glSaved" type="text" placeholder="R$ 0,00"></div>
-    <div class="form-row"><label>Quando quero atingir — opcional</label><input id="glDeadline" type="month"></div>
-    <button class="btn primary" style="width:100%" id="glSave">Criar meta</button>
+    <div class="form-row"><label>Onde está o dinheiro desta meta?</label><div class="chip-select" id="glLink">
+      <span class="opt" data-v="manual">Controlar manual</span>
+      <span class="opt" data-v="account">Numa conta</span>
+      <span class="opt" data-v="investment">Num investimento</span>
+    </div></div>
+    <div class="form-row" id="glManualRow"><label>Já guardei — opcional</label><input id="glSaved" type="text" placeholder="R$ 0,00"></div>
+    <div class="form-row" id="glSourceRow" style="display:none"><label id="glSourceLbl">Qual?</label><div class="chip-select" id="glSource"></div></div>
+    <div class="form-row"><label>Quando quero atingir — opcional</label><input id="glDeadline" type="month" value="${g.deadline||''}"></div>
+    <button class="btn primary" style="width:100%" id="glSave">${editing?'Salvar':'Criar meta'}</button>
   `);
-  attachMoneyMask(document.getElementById('glTarget'));
-  attachMoneyMask(document.getElementById('glSaved'));
+  attachMoneyMask(document.getElementById('glTarget'), editing?g.target:null);
+  attachMoneyMask(document.getElementById('glSaved'), (editing && (g.linkType||'manual')==='manual')?g.saved:null);
+  let linkType=g.linkType||'manual'; let linkId=g.linkId||'';
+  function renderSource(){
+    document.getElementById('glManualRow').style.display = linkType==='manual'?'':'none';
+    document.getElementById('glSourceRow').style.display = linkType==='manual'?'none':'';
+    const src=document.getElementById('glSource'); const lbl=document.getElementById('glSourceLbl');
+    if(linkType==='account'){ lbl.textContent='Qual conta?'; if(!linkId&&banks[0]) linkId=banks[0].key;
+      src.innerHTML = banks.length? banks.map(b=>`<span class="opt ${linkId===b.key?'sel':''}" data-k="${b.key}">${b.name}</span>`).join('') : '<span style="font-size:12px;color:var(--ink-faint)">Cadastre uma conta em Ajustes → Minhas contas.</span>'; }
+    else if(linkType==='investment'){ lbl.textContent='Qual investimento?'; if(!linkId&&invs[0]) linkId=invs[0].id;
+      src.innerHTML = invs.length? invs.map(x=>`<span class="opt ${linkId===x.id?'sel':''}" data-k="${x.id}">${x.name}</span>`).join('') : '<span style="font-size:12px;color:var(--ink-faint)">Cadastre um investimento na aba Investimentos primeiro.</span>'; }
+    src.querySelectorAll('.opt').forEach(o=>o.onclick=()=>{ src.querySelectorAll('.opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); linkId=o.dataset.k; });
+  }
+  document.querySelectorAll('#glLink .opt').forEach(o=>{ o.classList.toggle('sel', o.dataset.v===linkType); o.onclick=()=>{ document.querySelectorAll('#glLink .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); linkType=o.dataset.v; linkId=''; renderSource(); }; });
+  renderSource();
   document.getElementById('glSave').onclick=()=>{
     const name=document.getElementById('glName').value.trim(); if(!name){ document.getElementById('glName').style.borderColor='var(--red)'; return; }
     const target=parseMoney(document.getElementById('glTarget').value)||10000;
-    const saved=parseMoney(document.getElementById('glSaved').value)||0;
     const deadline=document.getElementById('glDeadline').value||'';
-    state.goals.push({name, target, saved, deadline});
+    const obj={name, target, deadline, linkType, linkId:(linkType==='manual'?'':linkId)};
+    obj.saved = linkType==='manual' ? (parseMoney(document.getElementById('glSaved').value)|| (editing?g.saved||0:0)) : 0;
+    if(editing) state.goals[editIdx]={...g, ...obj}; else state.goals.push(obj);
     closeModal(); render();
   };
 }
@@ -2380,9 +2426,11 @@ function openAccountModal(editIdx){
 
 function openAportModal(i){
   const g = state.goals[i]; if(!g) return;
+  const toInv = g.linkType==='investment';
+  const invLabel = toInv ? goalLinkLabel(g) : '';
   openModal(`
     <div class="modal-head"><h3>Aporte · ${g.name}</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
-    <div style="font-size:13px;color:var(--ink-faint);margin-bottom:12px">Guardado: <strong class="num">${BRL(g.saved)}</strong> de ${BRL(g.target)}</div>
+    <div style="font-size:13px;color:var(--ink-faint);margin-bottom:12px">Guardado: <strong class="num">${BRL(goalSaved(g))}</strong> de ${BRL(g.target)}${toInv?` · vai pra ${invLabel}`:''}</div>
     <div class="form-row"><label>Quanto guardar agora</label><input id="apVal" type="text" placeholder="R$ 0,00"></div>
     <div class="form-row"><label>De qual conta saiu?</label><div class="chip-select" id="apFrom">
       ${(state.obBanks||[]).length ? (state.obBanks||[]).map((b,idx)=>`<span class="opt ${idx===0?'sel':''}" data-k="${b.key}">${b.name}</span>`).join('') + `<span class="opt" data-k="">Não descontar</span>` : '<span style="font-size:12px;color:var(--ink-faint)">Cadastre uma conta em Ajustes → Minhas contas para descontar automaticamente.</span>'}
@@ -2395,7 +2443,9 @@ function openAportModal(i){
   document.getElementById('apSave').onclick=()=>{
     const v=parseMoney(document.getElementById('apVal').value)||0; if(v<=0) return;
     if(apFrom){ const acc=(state.obBanks||[]).find(b=>b.key===apFrom); if(acc){ acc.balance=(acc.balance||0)-v; recalcAccounts(); } }
-    g.saved += v; closeModal(); render();
+    if(toInv){ const inv=(state.investments||[]).find(x=>x.id===g.linkId); if(inv) inv.amount=(inv.amount||0)+v; } // aporte vai pro investimento (o saved reflete)
+    else { g.saved=(g.saved||0)+v; }
+    closeModal(); render();
   };
 }
 
