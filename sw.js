@@ -1,6 +1,6 @@
 /* FinApp · service worker — "rede primeiro" (sempre atualiza quando online; cache só offline) */
-const CACHE = 'finapp-v2';
-const ASSETS = ['./', './index.html', './config.js', './cloud.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
+const CACHE = 'finapp-v4';
+const ASSETS = ['./manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(ASSETS); }).then(function () { return self.skipWaiting(); }));

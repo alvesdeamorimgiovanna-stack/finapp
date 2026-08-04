@@ -8,7 +8,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" type="image/png" href="icon-192.png">
-<script>if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){});});}</script>
+<script>if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').then(function(reg){reg.update();reg.addEventListener('updatefound',function(){var nw=reg.installing;if(nw)nw.addEventListener('statechange',function(){if(nw.state==='activated'&&navigator.serviceWorker.controller)location.reload();});});}).catch(function(){});var reloaded=false;navigator.serviceWorker.addEventListener('controllerchange',function(){if(reloaded)return;reloaded=true;location.reload();});});}</script>
 <style>
 /* ============ TOKENS ============ */
 /* Pigeon palette — violet #834AFF · green #CFDE79 · pink #EA92C4 · orange #FD5526 · yellow #FABB01 */
@@ -684,6 +684,7 @@ function ic(name,cls){ return `<span class="${cls||''}" style="display:inline-fl
    ============================================================ */
 const MONTHS_ABBR = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const APP_VERSION = 'v15 · parcelas+meses';
 const TODAY = { day:24, monthIdx:6, month:'JUL' }; // 24 jul 2026 (demo "hoje")
 const TODAY_ISO = '2026-07-24';
 const CATEGORIES = [
@@ -1812,6 +1813,7 @@ function settingsView(){
     <div class="set-row"><div class="l">${ic('help')}<div class="t">Central de ajuda</div></div></div>
     <div class="set-row"><div class="l">${ic('shield')}<div class="t">Privacidade & segurança</div></div></div>
     <div class="set-row" id="resetDataBtn" style="cursor:pointer"><div class="l" style="color:var(--red)">${ic('logout')}<div><div class="t">Apagar dados e recomeçar</div><div class="s">Remove tudo salvo neste aparelho</div></div></div></div>
+    <div class="set-row"><div class="l">${ic('sparkle')}<div><div class="t">Versão</div><div class="s num">${APP_VERSION}</div></div></div></div>
   </div>`;
 }
 
