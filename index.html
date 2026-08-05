@@ -684,7 +684,7 @@ function ic(name,cls){ return `<span class="${cls||''}" style="display:inline-fl
    ============================================================ */
 const MONTHS_ABBR = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const APP_VERSION = 'v20 · metas vinculadas';
+const APP_VERSION = 'v21 · débito desconta da conta';
 const TODAY = { day:24, monthIdx:6, month:'JUL' }; // 24 jul 2026 (demo "hoje")
 const TODAY_ISO = '2026-07-24';
 const CATEGORIES = [
@@ -1072,6 +1072,9 @@ function quickAddForm(){
       </div>
       <div class="qa-field qaCardWrap" style="display:none"><label>Em qual cartão de crédito?</label>
         <div class="chip-select qaCard">${state.cards.length? state.cards.map((c,i)=>`<span class="opt ${i===0?'sel':''}" data-v="${i}">${c.bank}</span>`).join('') : '<span style="font-size:12px;color:var(--ink-faint)">Nenhum cartão cadastrado — adicione no perfil.</span>'}</div>
+      </div>
+      <div class="qa-field qaAccountWrap"><label>De qual conta saiu?</label>
+        <div class="chip-select qaAccount">${(state.obBanks||[]).length ? (state.obBanks||[]).map((b,idx)=>`<span class="opt ${idx===0?'sel':''}" data-v="${b.key}">${b.name}</span>`).join('')+`<span class="opt" data-v="">Não descontar</span>` : '<span style="font-size:12px;color:var(--ink-faint)">Cadastre uma conta em Ajustes → Minhas contas para descontar do saldo.</span>'}</div>
       </div>
     </div>
     <button class="btn primary qaSave" style="width:100%;margin-top:4px">${ic('plus')} <span class="qaSaveLabel">Adicionar gasto</span></button>
@@ -1886,7 +1889,7 @@ function wireThemeToggle(){
 function wireQuickAdd(box, inModal){
   if(!box) return;
   const single = (sel)=> box.querySelectorAll(sel+' .opt').forEach(o=>o.onclick=()=>{ box.querySelectorAll(sel+' .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); });
-  single('.qaCat'); single('.qaCard'); single('.qaSource'); single('.qaInAccount');
+  single('.qaCat'); single('.qaCard'); single('.qaSource'); single('.qaInAccount'); single('.qaAccount');
   // alternar Gasto / Entrada
   box.querySelectorAll('.qa-mode-btn').forEach(b=>b.onclick=()=>{
     const mode=b.dataset.mode;
@@ -1901,6 +1904,7 @@ function wireQuickAdd(box, inModal){
     box.querySelectorAll('.qaMethod .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel');
     const isCredit = o.dataset.v==='Crédito';
     const cw = box.querySelector('.qaCardWrap'); if(cw) cw.style.display = isCredit? 'block':'none';
+    const aw = box.querySelector('.qaAccountWrap'); if(aw) aw.style.display = isCredit? 'none':'block'; // débito/pix/etc: escolhe a conta
   });
   box.querySelector('.qaSave').onclick = ()=>{
     const mode = box.dataset.mode||'out';
@@ -1921,12 +1925,16 @@ function wireQuickAdd(box, inModal){
       const cat = box.querySelector('.qaCat .opt.sel')?.dataset.v || 'Outros';
       const method = box.querySelector('.qaMethod .opt.sel')?.dataset.v || 'Débito';
       const meta = catMeta(cat);
-      let cardName='';
+      let cardName='', acctKey='';
       if(method==='Crédito' && state.cards.length){
         const ci = parseInt(box.querySelector('.qaCard .opt.sel')?.dataset.v);
         if(!isNaN(ci) && state.cards[ci]){ state.cards[ci].balance += val; cardName = state.cards[ci].bank; }
+      } else {
+        acctKey = box.querySelector('.qaAccount .opt.sel')?.dataset.v || '';
+        if(acctKey){ const acc=(state.obBanks||[]).find(b=>b.key===acctKey); if(acc){ acc.balance=(acc.balance||0)-val; recalcAccounts(); } } // desconta da conta escolhida
       }
-      state.transactions.unshift({ t: desc || cat, s: `${cat} · ${method}${cardName?' · '+cardName:''}`, v:-val, pos:false, icon:meta.icon, color:meta.color, cat, method, card:cardName, date });
+      const acctName = acctKey ? ((state.obBanks||[]).find(b=>b.key===acctKey)?.name||'') : '';
+      state.transactions.unshift({ t: desc || cat, s: `${cat} · ${method}${cardName?' · '+cardName:(acctName?' · '+acctName:'')}`, v:-val, pos:false, icon:meta.icon, color:meta.color, cat, method, card:cardName, account:acctKey, date });
     }
     if(date.month===TODAY.month) state.selectedDay = date.day;
     if(inModal) closeModal();
@@ -1982,12 +1990,12 @@ function wireRouteExtras(){
   document.querySelectorAll('.txDel').forEach(b=>b.onclick=()=>{
     const x=state.transactions[+b.dataset.i]; if(!x) return;
     openModal(`<div class="modal-head"><h3>Excluir transação?</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
-      <p style="font-size:13.5px;color:var(--ink-dim);margin:0 0 16px">Remover <strong>${x.t}</strong> (${BRL(Math.abs(x.v))})?${x.card?` Isso também abate da fatura do ${x.card}.`:''}${(x.pos&&x.account)?' O valor sai do saldo da conta.':''}</p>
+      <p style="font-size:13.5px;color:var(--ink-dim);margin:0 0 16px">Remover <strong>${x.t}</strong> (${BRL(Math.abs(x.v))})?${x.card?` Isso também abate da fatura do ${x.card}.`:''}${x.account?(x.pos?' O valor sai do saldo da conta.':' O valor volta pro saldo da conta.'):''}</p>
       <div style="display:flex;gap:8px"><button class="btn ghost" style="flex:1" id="txDelCancel">Cancelar</button><button class="btn primary" style="flex:1;background:var(--red);color:#fff" id="txDelOk">Excluir</button></div>`);
     document.getElementById('txDelCancel').onclick=closeModal;
     document.getElementById('txDelOk').onclick=()=>{
       if(x.card && !x.pos){ const c=state.cards.find(cc=>cc.bank===x.card); if(c && x.date && MONTHS_ABBR.indexOf(x.date.month)===TODAY.monthIdx) c.balance=Math.max(0,c.balance-Math.abs(x.v)); }
-      if(x.pos && x.account){ const a=(state.obBanks||[]).find(bk=>bk.key===x.account); if(a){ a.balance=(a.balance||0)-x.v; recalcAccounts(); } }
+      if(x.account){ const a=(state.obBanks||[]).find(bk=>bk.key===x.account); if(a){ a.balance=(a.balance||0)-x.v; recalcAccounts(); } } // entrada devolve, gasto no débito re-credita
       const idx=state.transactions.indexOf(x); if(idx>=0) state.transactions.splice(idx,1);
       closeModal(); render();
     };
