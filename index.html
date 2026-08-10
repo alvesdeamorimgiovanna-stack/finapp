@@ -684,9 +684,11 @@ function ic(name,cls){ return `<span class="${cls||''}" style="display:inline-fl
    ============================================================ */
 const MONTHS_ABBR = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const APP_VERSION = 'v24 · mover mês em massa';
-const TODAY = { day:24, monthIdx:6, month:'JUL' }; // 24 jul 2026 (demo "hoje")
-const TODAY_ISO = '2026-07-24';
+const APP_VERSION = 'v25 · mês atual = data real';
+const _NOW = new Date();
+const CUR_YEAR = _NOW.getFullYear();
+const TODAY = { day:_NOW.getDate(), monthIdx:_NOW.getMonth(), month:MONTHS_ABBR[_NOW.getMonth()] }; // data real
+const TODAY_ISO = `${CUR_YEAR}-${String(_NOW.getMonth()+1).padStart(2,'0')}-${String(_NOW.getDate()).padStart(2,'0')}`;
 const CATEGORIES = [
   {name:'Alimentação', icon:'food', color:'amber'},
   {name:'Transporte', icon:'car', color:'purple'},
@@ -706,7 +708,7 @@ const state = {
   onboardingDone: false,
   profile: { name:'', age:'', goal:'' },
   route: 'home',
-  monthLabel: 'Julho 2026',
+  monthLabel: MONTH_NAMES[TODAY.monthIdx]+' '+CUR_YEAR,
   incomes: [],
   fixedOut: [],
   investments: [],
@@ -719,7 +721,7 @@ const state = {
   reportHorizon: 'curto',
   selectedDay: TODAY.day,
   calMonth: TODAY.monthIdx,
-  calYear: 2026,
+  calYear: CUR_YEAR,
   settings: {
     notifOn:true, biometric:true, darkAuto:true,
   }
@@ -1232,7 +1234,7 @@ function calendarView(){
   const startDow = new Date(y, m, 1).getDay(); // 0=Dom
   const dow = ['D','S','T','Q','Q','S','S'];
   const sel = Math.min(state.selectedDay, daysInMonth);
-  const isCurrentMonth = (y===2026 && m===TODAY.monthIdx);
+  const isCurrentMonth = (y===CUR_YEAR && m===TODAY.monthIdx);
   let cells = '';
   for(let i=0;i<startDow;i++) cells += `<div></div>`;
   for(let d=1; d<=daysInMonth; d++){
@@ -1967,7 +1969,7 @@ function wireRouteExtras(){
   const calNext = document.getElementById('calNext');
   if(calNext) calNext.onclick=()=>{ state.calMonth++; if(state.calMonth>11){state.calMonth=0; state.calYear++;} render(); };
   const calToday = document.getElementById('calToday');
-  if(calToday) calToday.onclick=()=>{ state.calMonth=TODAY.monthIdx; state.calYear=2026; state.selectedDay=TODAY.day; render(); };
+  if(calToday) calToday.onclick=()=>{ state.calMonth=TODAY.monthIdx; state.calYear=CUR_YEAR; state.selectedDay=TODAY.day; render(); };
 
   // cartões
   document.querySelectorAll('[data-cardidx]').forEach(b=>b.onclick=()=>{ state.activeCard=+b.dataset.cardidx; render(); });
@@ -3225,6 +3227,9 @@ function boot(){
   }
   document.getElementById('ob').style.display='none';
   document.getElementById('app').style.display='block';
+  // sincroniza o "mês atual" com a data real (mesmo que tenha sido salvo em outro mês)
+  state.monthLabel = MONTH_NAMES[TODAY.monthIdx]+' '+CUR_YEAR;
+  state.calMonth = TODAY.monthIdx; state.calYear = CUR_YEAR;
   render(); // o render() (sobrescrito) já insere e conecta a barra inferior
 }
 function wireBottomNav(){
