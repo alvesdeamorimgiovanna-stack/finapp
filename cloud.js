@@ -52,6 +52,8 @@
       var m = (err.message || err.error_description || err.msg || '').toString();
       var code = (err.code || err.error || '').toString();
       var low = (m + ' ' + code).toLowerCase();
+      if (low.indexOf('failed to fetch') >= 0 || low.indexOf('networkerror') >= 0 || low.indexOf('load failed') >= 0 || low.indexOf('fetch') >= 0)
+        return 'Sem conexão com o servidor. Verifique sua internet — tente outra rede (4G/Wi‑Fi) ou desative bloqueadores/escudos e tente de novo.';
       if (low.indexOf('already registered') >= 0 || low.indexOf('already been registered') >= 0 || code === 'user_already_exists')
         return 'Esse e-mail já tem conta. Toque em "Entrar".';
       if (low.indexOf('invalid login') >= 0 || code === 'invalid_credentials')
