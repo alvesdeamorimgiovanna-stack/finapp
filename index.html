@@ -684,7 +684,7 @@ function ic(name,cls){ return `<span class="${cls||''}" style="display:inline-fl
    ============================================================ */
 const MONTHS_ABBR = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const APP_VERSION = 'v23 · editar pessoas no lançamento';
+const APP_VERSION = 'v24 · mover mês em massa';
 const TODAY = { day:24, monthIdx:6, month:'JUL' }; // 24 jul 2026 (demo "hoje")
 const TODAY_ISO = '2026-07-24';
 const CATEGORIES = [
@@ -1796,7 +1796,7 @@ function cartoesView(){
     </div>
   </div>`:''}
 
-  <div class="section-title"><h2>Lançamentos${showAll?'':' · '+MONTH_NAMES[cm]}</h2><button class="link" id="cardShowAllBtn">${showAll?'ver por mês':'ver todos'}</button></div>
+  <div class="section-title"><h2>Lançamentos${showAll?'':' · '+MONTH_NAMES[cm]}</h2><div style="display:flex;gap:12px;align-items:center"><button class="link" id="cardShiftBtn">mover mês</button><button class="link" id="cardShowAllBtn">${showAll?'ver por mês':'ver todos'}</button></div></div>
   <div class="card card-pad">
     ${listTx.length? listTx.map((x)=>{const gi=state.transactions.indexOf(x);return `<div class="tx-row">
       <div class="tx-ic" style="background:${colorSoft(x.color)};color:${x.color==='lime'?'var(--lime-ink)':colorVar(x.color)}">${ic(x.icon)}</div>
@@ -1977,6 +1977,7 @@ function wireRouteExtras(){
   const cmPrev=document.getElementById('cardMonthPrev'); if(cmPrev) cmPrev.onclick=()=>{ if(state.cardMonth==null) state.cardMonth=TODAY.monthIdx; state.cardMonth=((state.cardMonth-1)%12+12)%12; render(); };
   const cmNext=document.getElementById('cardMonthNext'); if(cmNext) cmNext.onclick=()=>{ if(state.cardMonth==null) state.cardMonth=TODAY.monthIdx; state.cardMonth=(state.cardMonth+1)%12; render(); };
   const showAllBtn=document.getElementById('cardShowAllBtn'); if(showAllBtn) showAllBtn.onclick=()=>{ state.cardShowAll=!state.cardShowAll; render(); };
+  const shiftBtn=document.getElementById('cardShiftBtn'); if(shiftBtn) shiftBtn.onclick=()=>{ const c=state.cards[Math.min(state.activeCard||0,state.cards.length-1)]; if(c) openShiftMonthsModal(c.bank); };
   document.querySelectorAll('.cardTxEdit').forEach(b=>b.onclick=()=>openEditCardTxModal(+b.dataset.i));
   document.querySelectorAll('.cardTxDel').forEach(b=>b.onclick=()=>{
     const bank=b.dataset.bank, t=decodeURIComponent(b.dataset.t), v=parseFloat(b.dataset.v);
@@ -2380,6 +2381,31 @@ function openEditCardTxModal(gi){
     x.owedBy = x.shares[0]?x.shares[0].name:'';
     closeModal(); render();
   };
+}
+
+// move o mês de TODOS os lançamentos de um cartão (mantém divisão e recebido)
+function shiftCardMonths(bank, delta){
+  (state.transactions||[]).forEach(x=>{
+    if(x.card===bank && !x.pos && x.date){
+      const mi=MONTHS_ABBR.indexOf(x.date.month);
+      if(mi>=0) x.date={...x.date, month:MONTHS_ABBR[((mi+delta)%12+12)%12]};
+    }
+  });
+}
+function openShiftMonthsModal(bank){
+  const n=(state.transactions||[]).filter(x=>x.card===bank && !x.pos && x.date).length;
+  if(!n){ openModal(`<div class="modal-head"><h3>Mover mês</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div><p style="font-size:13px;color:var(--ink-dim)">Este cartão não tem lançamentos com data pra mover.</p>`); return; }
+  openModal(`
+    <div class="modal-head"><h3>Mover mês dos lançamentos</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
+    <p style="font-size:13px;color:var(--ink-dim);margin:0 0 6px">Ajusta o mês de <strong>todos os ${n} lançamentos do ${bank}</strong> de uma vez — mantendo a divisão e quem já pagou.</p>
+    <p style="font-size:12px;color:var(--ink-faint);margin:0 0 16px">Ex.: "+1 mês" leva julho→agosto, agosto→setembro, e assim por diante.</p>
+    <div style="display:flex;gap:8px">
+      <button class="btn ghost" style="flex:1" id="shiftBack">− 1 mês</button>
+      <button class="btn primary" style="flex:1" id="shiftFwd">+ 1 mês</button>
+    </div>
+  `);
+  document.getElementById('shiftFwd').onclick=()=>{ shiftCardMonths(bank, 1); closeModal(); render(); };
+  document.getElementById('shiftBack').onclick=()=>{ shiftCardMonths(bank, -1); closeModal(); render(); };
 }
 
 function openReceiveModal(bank, name){
