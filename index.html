@@ -684,7 +684,7 @@ function ic(name,cls){ return `<span class="${cls||''}" style="display:inline-fl
    ============================================================ */
 const MONTHS_ABBR = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const APP_VERSION = 'v26 · ciclo da fatura (fechamento)';
+const APP_VERSION = 'v27 · fatura = soma dos lançamentos';
 const _NOW = new Date();
 const CUR_YEAR = _NOW.getFullYear();
 const TODAY = { day:_NOW.getDate(), monthIdx:_NOW.getMonth(), month:MONTHS_ABBR[_NOW.getMonth()] }; // data real
@@ -1765,7 +1765,8 @@ function cartoesView(){
   const showAll = !!state.cardShowAll;
   const listTx = showAll ? cardTx(c.bank) : monthTx;
   const launchSum = monthTx.reduce((a,x)=>a+Math.abs(x.v),0);
-  const fatura = isCurrent ? c.balance : launchSum; // mês atual: fatura registrada; outros meses: soma dos lançamentos
+  // fatura = soma dos lançamentos do mês; só cai pro valor registrado (legado) se o mês não tiver lançamento
+  const fatura = monthTx.length ? launchSum : (isCurrent ? (c.balance||0) : 0);
   const shares = monthTx.flatMap(x=>txShares(x));
   const owedUnpaid = shares.reduce((a,s)=>a+Math.max(0, s.amt-shareRecv(s)),0);
   const received = shares.reduce((a,s)=>a+Math.min(s.amt, shareRecv(s)),0);
@@ -1803,7 +1804,7 @@ function cartoesView(){
     </div>
     ${owedAll>0?`<p style="font-size:11.5px;color:var(--ink-faint);margin:10px 2px 0">Do total de ${BRL(fatura)}, ${BRL(owedAll)} é de outras pessoas — seu gasto real é ${BRL(real)}${received>0?` (já recebeu ${BRL(received)})`:''}.</p>`:''}
     <div style="display:flex;gap:8px;margin-top:12px">
-      ${isCurrent?`<button class="btn ghost" id="cardAdjustBtn" style="flex:1">Ajustar fatura</button>`:''}
+      ${isCurrent && !monthTx.length?`<button class="btn ghost" id="cardAdjustBtn" style="flex:1">Registrar fatura</button>`:''}
       <button class="btn primary" id="cardAddTxBtn" style="flex:1">${ic('plus')} Lançamento</button>
     </div>
   </div>
@@ -1969,8 +1970,7 @@ function wireQuickAdd(box, inModal){
         const ci = parseInt(box.querySelector('.qaCard .opt.sel')?.dataset.v);
         if(!isNaN(ci) && state.cards[ci]){
           const card=state.cards[ci]; cardName=card.bank;
-          const invMi=invoiceMonthIdx(card, date); invMonth=MONTHS_ABBR[invMi];
-          if(invMi===cardOpenInvMi(card)) card.balance += val; // só entra na fatura se for a fatura aberta
+          const invMi=invoiceMonthIdx(card, date); invMonth=MONTHS_ABBR[invMi]; // a fatura é a soma dos lançamentos do mês
         }
       } else {
         acctKey = box.querySelector('.qaAccount .opt.sel')?.dataset.v || '';
@@ -2026,7 +2026,7 @@ function wireRouteExtras(){
   document.querySelectorAll('.cardTxDel').forEach(b=>b.onclick=()=>{
     const bank=b.dataset.bank, t=decodeURIComponent(b.dataset.t), v=parseFloat(b.dataset.v);
     const idx=state.transactions.findIndex(x=>x.card===bank && x.t===t && x.v===v);
-    if(idx>=0){ const removed=state.transactions[idx]; state.transactions.splice(idx,1); const c=state.cards.find(x=>x.bank===bank); if(c && txInvMi(removed)===cardOpenInvMi(c)) c.balance=Math.max(0,c.balance-Math.abs(v)); }
+    if(idx>=0){ state.transactions.splice(idx,1); } // fatura é derivada dos lançamentos, não precisa mexer no balance
     render();
   });
   // cartão: dar baixa em quem pagou a parte dele
@@ -2039,7 +2039,7 @@ function wireRouteExtras(){
       <div style="display:flex;gap:8px"><button class="btn ghost" style="flex:1" id="txDelCancel">Cancelar</button><button class="btn primary" style="flex:1;background:var(--red);color:#fff" id="txDelOk">Excluir</button></div>`);
     document.getElementById('txDelCancel').onclick=closeModal;
     document.getElementById('txDelOk').onclick=()=>{
-      if(x.card && !x.pos){ const c=state.cards.find(cc=>cc.bank===x.card); if(c && txInvMi(x)===cardOpenInvMi(c)) c.balance=Math.max(0,c.balance-Math.abs(x.v)); }
+      // fatura do cartão é derivada dos lançamentos — remover a transação já ajusta sozinho
       if(x.account){ const a=(state.obBanks||[]).find(bk=>bk.key===x.account); if(a){ a.balance=(a.balance||0)-x.v; recalcAccounts(); } } // entrada devolve, gasto no débito re-credita
       const idx=state.transactions.indexOf(x); if(idx>=0) state.transactions.splice(idx,1);
       closeModal(); render();
@@ -2345,8 +2345,7 @@ function openCardTxModal(cardIdx){
     if(!inst.checked){
       // à vista: a data + o fechamento definem em qual fatura entra
       const date={day:D, month:MONTHS_ABBR[(M-1)]||TODAY.month};
-      const invMi=invoiceMonthIdx(c, date); const invMonth=MONTHS_ABBR[invMi];
-      if(invMi===cardOpenInvMi(c)) c.balance += val; // só soma na fatura aberta
+      const invMi=invoiceMonthIdx(c, date); const invMonth=MONTHS_ABBR[invMi]; // fatura = soma dos lançamentos do mês
       state.transactions.unshift({ t:desc, s:`${cat} · Crédito · ${c.bank}`, v:-val, pos:false, icon:meta.icon, color:meta.color, cat, method:'Crédito', card:c.bank, shares, owed:owedSum, owedBy:(shares[0]?shares[0].name:''), invMonth, date });
       if(date.month===TODAY.month) state.selectedDay=date.day;
     } else {
@@ -2363,7 +2362,6 @@ function openCardTxModal(cardIdx){
         const pmi=(TODAY.monthIdx+startOff+k)%12; const pmonth=MONTHS_ABBR[pmi];
         const pdate={day:D, month:pmonth};
         state.transactions.unshift({ t:`${desc} (${k+1}/${N})`, s:`${cat} · Crédito · ${c.bank} · parcela ${k+1}/${N}`, v:-pval, pos:false, icon:meta.icon, color:meta.color, cat, method:'Crédito', card:c.bank, shares:pshares, owed:powed, owedBy:(pshares[0]?pshares[0].name:''), invMonth:pmonth, date:pdate, inst:{i:k+1, n:N, group} });
-        if(pmi===cardOpenInvMi(c)) c.balance += pval; // só a parcela da fatura aberta entra na fatura atual
       }
     }
     closeModal(); render();
@@ -2416,14 +2414,7 @@ function openEditCardTxModal(gi){
     const newDate={day:D, month:MONTHS_ABBR[newMi]||(x.date&&x.date.month)||TODAY.month};
     const c=state.cards.find(cc=>cc.bank===x.card);
     let newInvMonth=MONTHS_ABBR[newMi];
-    if(c){
-      const openMi=cardOpenInvMi(c);
-      const oldInvMi=txInvMi(x);
-      const newInvMi=invoiceMonthIdx(c, newDate); newInvMonth=MONTHS_ABBR[newInvMi];
-      const oldEff=(oldInvMi===openMi)?oldVal:0;
-      const newEff=(newInvMi===openMi)?nv:0;
-      c.balance=Math.max(0, c.balance - oldEff + newEff);
-    }
+    if(c){ newInvMonth=MONTHS_ABBR[invoiceMonthIdx(c, newDate)]; } // recalcula o mês da fatura pela data + fechamento
     x.t=desc; x.v=-nv; x.date=newDate; x.invMonth=newInvMonth;
     // reconstrói as divisões preservando o recebido (limitado ao novo valor de cada parte)
     x.shares = work.filter(s=>(s.amt||0)>0).map(s=>{ const amt=Math.min(s.amt, nv); const received=Math.min(s.received||0, amt); return {name:(s.name||'').trim()||'Alguém', amt, received, paid: received>=amt-0.001}; });
