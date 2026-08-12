@@ -684,7 +684,7 @@ function ic(name,cls){ return `<span class="${cls||''}" style="display:inline-fl
    ============================================================ */
 const MONTHS_ABBR = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const APP_VERSION = 'v27 · fatura = soma dos lançamentos';
+const APP_VERSION = 'v28 · pagar fatura da conta';
 const _NOW = new Date();
 const CUR_YEAR = _NOW.getFullYear();
 const TODAY = { day:_NOW.getDate(), monthIdx:_NOW.getMonth(), month:MONTHS_ABBR[_NOW.getMonth()] }; // data real
@@ -1775,6 +1775,8 @@ function cartoesView(){
   const byPerson = {};
   shares.forEach(s=>{ const k=s.name||'Alguém'; if(!byPerson[k]) byPerson[k]={owe:0,paid:0}; byPerson[k].owe+=Math.max(0,s.amt-shareRecv(s)); byPerson[k].paid+=Math.min(s.amt,shareRecv(s)); });
   const people = Object.entries(byPerson).sort((a,b)=>(b[1].owe+b[1].paid)-(a[1].owe+a[1].paid));
+  const payKey = MONTHS_ABBR[cm];
+  const pay = (c.payments||{})[payKey]; // pagamento registrado da fatura deste mês
   return `
   <div class="section-title" style="margin-top:6px"><h2>Cartões</h2><button class="link" id="addCardBtn">+ cartão</button></div>
 
@@ -1807,6 +1809,9 @@ function cartoesView(){
       ${isCurrent && !monthTx.length?`<button class="btn ghost" id="cardAdjustBtn" style="flex:1">Registrar fatura</button>`:''}
       <button class="btn primary" id="cardAddTxBtn" style="flex:1">${ic('plus')} Lançamento</button>
     </div>
+    ${fatura>0 ? (pay
+      ? `<div class="cartao-ok" style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;gap:8px"><span>${ic('check')} Fatura paga · ${BRL(pay.amount)}${pay.acctName?' · da '+pay.acctName:''}</span><button class="link" id="cardUnpayBtn">desfazer</button></div>`
+      : `<button class="btn ghost" id="cardPayBtn" data-mk="${payKey}" data-fatura="${fatura}" data-real="${real}" style="width:100%;margin-top:10px">${ic('wallet')} Registrar pagamento da fatura</button>`) : ''}
   </div>
 
   ${owedAll>0?`<div class="card card-pad" style="margin-top:14px">
@@ -2016,6 +2021,8 @@ function wireRouteExtras(){
   document.querySelectorAll('[data-cardidx]').forEach(b=>b.onclick=()=>{ state.activeCard=+b.dataset.cardidx; const cc=state.cards[state.activeCard]; if(cc) state.cardMonth=cardOpenInvMi(cc); render(); });
   const addCardBtn=document.getElementById('addCardBtn'); if(addCardBtn) addCardBtn.onclick=openAddCardModal;
   const cardConfig=document.getElementById('cardConfigBtn'); if(cardConfig) cardConfig.onclick=()=>openCardConfigModal(Math.min(state.activeCard||0,state.cards.length-1));
+  const payBtn=document.getElementById('cardPayBtn'); if(payBtn) payBtn.onclick=()=>openPayInvoiceModal(Math.min(state.activeCard||0,state.cards.length-1), payBtn.dataset.mk, parseFloat(payBtn.dataset.fatura)||0, parseFloat(payBtn.dataset.real)||0);
+  const unpayBtn=document.getElementById('cardUnpayBtn'); if(unpayBtn) unpayBtn.onclick=()=>undoInvoicePayment(Math.min(state.activeCard||0,state.cards.length-1), MONTHS_ABBR[((state.cardMonth%12)+12)%12]);
   const cardAdjust=document.getElementById('cardAdjustBtn'); if(cardAdjust) cardAdjust.onclick=()=>openAdjustFaturaModal(state.activeCard||0);
   const cardAddTx=document.getElementById('cardAddTxBtn'); if(cardAddTx) cardAddTx.onclick=()=>openCardTxModal(state.activeCard||0);
   const cmPrev=document.getElementById('cardMonthPrev'); if(cmPrev) cmPrev.onclick=()=>{ if(state.cardMonth==null) state.cardMonth=TODAY.monthIdx; state.cardMonth=((state.cardMonth-1)%12+12)%12; render(); };
@@ -2447,6 +2454,39 @@ function openShiftMonthsModal(bank){
   `);
   document.getElementById('shiftFwd').onclick=()=>{ shiftCardMonths(bank, 1); closeModal(); render(); };
   document.getElementById('shiftBack').onclick=()=>{ shiftCardMonths(bank, -1); closeModal(); render(); };
+}
+
+function openPayInvoiceModal(cardIdx, monthKey, fatura, real){
+  const c=state.cards[cardIdx]; if(!c) return;
+  const banks=state.obBanks||[];
+  const mi=MONTHS_ABBR.indexOf(monthKey);
+  openModal(`
+    <div class="modal-head"><h3>Pagar fatura · ${mi>=0?MONTH_NAMES[mi]:monthKey}</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
+    <p style="font-size:13px;color:var(--ink-faint);margin:0 0 12px">Fatura total ${BRL(fatura)} · sua parte ${BRL(real)}.</p>
+    <div class="form-row"><label>Quanto você pagou?</label><input id="pyVal" type="text" placeholder="R$ 0,00"><div style="font-size:11.5px;color:var(--ink-faint);margin-top:5px">Vem preenchido com a sua parte — ajuste se pagou a fatura cheia ou outro valor.</div></div>
+    <div class="form-row"><label>De qual conta saiu?</label><div class="chip-select" id="pyFrom">
+      ${banks.length ? banks.map((b,idx)=>`<span class="opt ${idx===0?'sel':''}" data-k="${b.key}">${b.name}</span>`).join('')+`<span class="opt" data-k="">Não descontar</span>` : `<span class="opt sel" data-k="">Não descontar</span>`}
+    </div></div>
+    <button class="btn primary" style="width:100%" id="pySave">${ic('check')} Confirmar pagamento</button>
+  `);
+  attachMoneyMask(document.getElementById('pyVal'), real);
+  let key=banks.length?banks[0].key:'';
+  document.querySelectorAll('#pyFrom .opt').forEach(o=>o.onclick=()=>{ document.querySelectorAll('#pyFrom .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); key=o.dataset.k; });
+  document.getElementById('pySave').onclick=()=>{
+    const v=parseMoney(document.getElementById('pyVal').value)||0; if(v<=0) return;
+    let acctName='';
+    if(key){ const acc=banks.find(b=>b.key===key); if(acc){ acc.balance=(acc.balance||0)-v; recalcAccounts(); acctName=acc.name; } }
+    if(!c.payments) c.payments={};
+    c.payments[monthKey]={amount:v, acct:key, acctName, ts:Date.now()};
+    closeModal(); render();
+  };
+}
+function undoInvoicePayment(cardIdx, monthKey){
+  const c=state.cards[cardIdx]; if(!c||!c.payments||!c.payments[monthKey]) return;
+  const p=c.payments[monthKey];
+  if(p.acct){ const acc=(state.obBanks||[]).find(b=>b.key===p.acct); if(acc){ acc.balance=(acc.balance||0)+p.amount; recalcAccounts(); } }
+  delete c.payments[monthKey];
+  render();
 }
 
 function openReceiveModal(bank, name){
