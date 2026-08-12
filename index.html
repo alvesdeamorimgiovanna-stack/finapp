@@ -684,7 +684,7 @@ function ic(name,cls){ return `<span class="${cls||''}" style="display:inline-fl
    ============================================================ */
 const MONTHS_ABBR = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const APP_VERSION = 'v25 · mês atual = data real';
+const APP_VERSION = 'v26 · ciclo da fatura (fechamento)';
 const _NOW = new Date();
 const CUR_YEAR = _NOW.getFullYear();
 const TODAY = { day:_NOW.getDate(), monthIdx:_NOW.getMonth(), month:MONTHS_ABBR[_NOW.getMonth()] }; // data real
@@ -1074,6 +1074,7 @@ function quickAddForm(){
       </div>
       <div class="qa-field qaCardWrap" style="display:none"><label>Em qual cartão de crédito?</label>
         <div class="chip-select qaCard">${state.cards.length? state.cards.map((c,i)=>`<span class="opt ${i===0?'sel':''}" data-v="${i}">${c.bank}</span>`).join('') : '<span style="font-size:12px;color:var(--ink-faint)">Nenhum cartão cadastrado — adicione no perfil.</span>'}</div>
+        <div class="qaInvNote" style="font-size:11.5px;color:var(--purple);margin-top:6px"></div>
       </div>
       <div class="qa-field qaAccountWrap"><label>De qual conta saiu?</label>
         <div class="chip-select qaAccount">${(state.obBanks||[]).length ? (state.obBanks||[]).map((b,idx)=>`<span class="opt ${idx===0?'sel':''}" data-v="${b.key}">${b.name}</span>`).join('')+`<span class="opt" data-v="">Não descontar</span>` : '<span style="font-size:12px;color:var(--ink-faint)">Cadastre uma conta em Ajustes → Minhas contas para descontar do saldo.</span>'}</div>
@@ -1708,6 +1709,22 @@ function chatAsk(text){
    CARTÕES (gestão interna de cada cartão)
    ============================================================ */
 function cardTx(bank){ return (state.transactions||[]).filter(x=>x.card===bank && !x.pos); }
+/* ---- ciclo da fatura (fechamento x vencimento) ---- */
+function cardDueDay(c){ if(c && c.due) return c.due; const m=((c&&c.kind)||'').match(/dia (\d+)/); return m?parseInt(m[1]):null; }
+function cardCloseDay(c){ return (c&&c.close)||null; }
+// em qual mês (índice) a compra cai, dado o dia de fechamento do cartão
+function invoiceMonthIdx(card, dateObj){
+  const mi = dateObj? MONTHS_ABBR.indexOf(dateObj.month) : TODAY.monthIdx;
+  const base = mi<0?TODAY.monthIdx:mi;
+  const close = cardCloseDay(card);
+  if(close && dateObj && dateObj.day>close) return (base+1)%12; // comprou depois do fechamento → próxima fatura
+  return base;
+}
+function invoiceMonthAbbr(card, dateObj){ return MONTHS_ABBR[invoiceMonthIdx(card, dateObj)]; }
+// fatura "aberta" hoje (pra onde vão as compras de agora)
+function cardOpenInvMi(card){ const close=cardCloseDay(card); if(close && TODAY.day>close) return (TODAY.monthIdx+1)%12; return TODAY.monthIdx; }
+// mês da fatura de uma transação já lançada
+function txInvMi(x){ if(x.invMonth){ const i=MONTHS_ABBR.indexOf(x.invMonth); if(i>=0) return i; } return x.date? MONTHS_ABBR.indexOf(x.date.month) : -1; }
 // divisão de uma transação: [{name, amt, paid}] — migra formato antigo (owed/owedBy)
 function txShares(x){
   if(Array.isArray(x.shares)) return x.shares;
@@ -1739,11 +1756,12 @@ function cartoesView(){
   }
   const active = Math.min(state.activeCard||0, state.cards.length-1);
   const c = state.cards[active];
-  if(state.cardMonth==null) state.cardMonth=TODAY.monthIdx;
+  const openMi = cardOpenInvMi(c); // fatura aberta deste cartão (considerando o fechamento)
+  if(state.cardMonth==null) state.cardMonth=openMi;
   const cm = ((state.cardMonth%12)+12)%12;
-  const isCurrent = cm===TODAY.monthIdx;
-  // no mês atual mostramos também lançamentos sem data (legados) pra nada sumir
-  const monthTx = cardTx(c.bank).filter(x=> isCurrent ? (!x.date || MONTHS_ABBR.indexOf(x.date.month)===cm) : (x.date && MONTHS_ABBR.indexOf(x.date.month)===cm));
+  const isCurrent = cm===openMi;
+  // agrupa pelo MÊS DA FATURA (invMonth); no mês aberto mostra também legados sem data
+  const monthTx = cardTx(c.bank).filter(x=>{ const i=txInvMi(x); return isCurrent ? (i<0 || i===cm) : (i===cm); });
   const showAll = !!state.cardShowAll;
   const listTx = showAll ? cardTx(c.bank) : monthTx;
   const launchSum = monthTx.reduce((a,x)=>a+Math.abs(x.v),0);
@@ -1769,11 +1787,15 @@ function cartoesView(){
 
   <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:14px">
     <button class="btn ghost" id="cardMonthPrev" style="padding:8px 14px">${ic('chevL')}</button>
-    <div style="font-weight:800;font-size:15px">${MONTH_NAMES[cm]}${isCurrent?' · atual':''}</div>
+    <div style="font-weight:800;font-size:15px">${MONTH_NAMES[cm]}${isCurrent?' · aberta':''}</div>
     <button class="btn ghost" id="cardMonthNext" style="padding:8px 14px">${ic('chevR')}</button>
   </div>
 
   <div class="card card-pad" style="margin-top:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:-2px 0 10px">
+      <span style="font-size:11.5px;color:var(--ink-faint)">${cardCloseDay(c)?`Fecha dia ${cardCloseDay(c)}`:'Sem dia de fechamento'}${cardDueDay(c)?` · vence dia ${cardDueDay(c)}`:''}</span>
+      <button class="link" id="cardConfigBtn">configurar</button>
+    </div>
     <div class="cartao-stats">
       <div><div class="cs-k">Total da fatura</div><div class="cs-v num">${BRL(fatura)}</div></div>
       <div><div class="cs-k">Seu gasto real</div><div class="cs-v num" style="color:var(--red)">${BRL(real)}</div></div>
@@ -1890,8 +1912,21 @@ function wireThemeToggle(){
 
 function wireQuickAdd(box, inModal){
   if(!box) return;
-  const single = (sel)=> box.querySelectorAll(sel+' .opt').forEach(o=>o.onclick=()=>{ box.querySelectorAll(sel+' .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); });
+  function updateInvNote(){
+    const note=box.querySelector('.qaInvNote'); if(!note) return;
+    const method=box.querySelector('.qaMethod .opt.sel')?.dataset.v;
+    if(method!=='Crédito'){ note.textContent=''; return; }
+    const ci=parseInt(box.querySelector('.qaCard .opt.sel')?.dataset.v);
+    const card=state.cards[ci]; if(!card){ note.textContent=''; return; }
+    const dv=box.querySelector('.qaDate').value||TODAY_ISO; const [,M,D]=dv.split('-').map(Number);
+    const dobj={day:D, month:MONTHS_ABBR[(M-1)]||TODAY.month};
+    if(!cardCloseDay(card)){ note.innerHTML='Sem dia de fechamento — configure em Cartões p/ ir pra fatura certa.'; return; }
+    const invM=invoiceMonthIdx(card, dobj);
+    note.textContent='➜ vai pra fatura de '+MONTH_NAMES[invM]+(invM===cardOpenInvMi(card)?' (aberta)':'');
+  }
+  const single = (sel)=> box.querySelectorAll(sel+' .opt').forEach(o=>o.onclick=()=>{ box.querySelectorAll(sel+' .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); if(sel==='.qaCard') updateInvNote(); });
   single('.qaCat'); single('.qaCard'); single('.qaSource'); single('.qaInAccount'); single('.qaAccount');
+  const qaDateEl=box.querySelector('.qaDate'); if(qaDateEl) qaDateEl.addEventListener('input', updateInvNote);
   // alternar Gasto / Entrada
   box.querySelectorAll('.qa-mode-btn').forEach(b=>b.onclick=()=>{
     const mode=b.dataset.mode;
@@ -1907,6 +1942,7 @@ function wireQuickAdd(box, inModal){
     const isCredit = o.dataset.v==='Crédito';
     const cw = box.querySelector('.qaCardWrap'); if(cw) cw.style.display = isCredit? 'block':'none';
     const aw = box.querySelector('.qaAccountWrap'); if(aw) aw.style.display = isCredit? 'none':'block'; // débito/pix/etc: escolhe a conta
+    updateInvNote();
   });
   box.querySelector('.qaSave').onclick = ()=>{
     const mode = box.dataset.mode||'out';
@@ -1928,15 +1964,20 @@ function wireQuickAdd(box, inModal){
       const method = box.querySelector('.qaMethod .opt.sel')?.dataset.v || 'Débito';
       const meta = catMeta(cat);
       let cardName='', acctKey='';
+      let invMonth='';
       if(method==='Crédito' && state.cards.length){
         const ci = parseInt(box.querySelector('.qaCard .opt.sel')?.dataset.v);
-        if(!isNaN(ci) && state.cards[ci]){ state.cards[ci].balance += val; cardName = state.cards[ci].bank; }
+        if(!isNaN(ci) && state.cards[ci]){
+          const card=state.cards[ci]; cardName=card.bank;
+          const invMi=invoiceMonthIdx(card, date); invMonth=MONTHS_ABBR[invMi];
+          if(invMi===cardOpenInvMi(card)) card.balance += val; // só entra na fatura se for a fatura aberta
+        }
       } else {
         acctKey = box.querySelector('.qaAccount .opt.sel')?.dataset.v || '';
         if(acctKey){ const acc=(state.obBanks||[]).find(b=>b.key===acctKey); if(acc){ acc.balance=(acc.balance||0)-val; recalcAccounts(); } } // desconta da conta escolhida
       }
       const acctName = acctKey ? ((state.obBanks||[]).find(b=>b.key===acctKey)?.name||'') : '';
-      state.transactions.unshift({ t: desc || cat, s: `${cat} · ${method}${cardName?' · '+cardName:(acctName?' · '+acctName:'')}`, v:-val, pos:false, icon:meta.icon, color:meta.color, cat, method, card:cardName, account:acctKey, date });
+      state.transactions.unshift({ t: desc || cat, s: `${cat} · ${method}${cardName?' · '+cardName:(acctName?' · '+acctName:'')}`, v:-val, pos:false, icon:meta.icon, color:meta.color, cat, method, card:cardName, account:acctKey, invMonth, date });
     }
     if(date.month===TODAY.month) state.selectedDay = date.day;
     if(inModal) closeModal();
@@ -1972,8 +2013,9 @@ function wireRouteExtras(){
   if(calToday) calToday.onclick=()=>{ state.calMonth=TODAY.monthIdx; state.calYear=CUR_YEAR; state.selectedDay=TODAY.day; render(); };
 
   // cartões
-  document.querySelectorAll('[data-cardidx]').forEach(b=>b.onclick=()=>{ state.activeCard=+b.dataset.cardidx; render(); });
+  document.querySelectorAll('[data-cardidx]').forEach(b=>b.onclick=()=>{ state.activeCard=+b.dataset.cardidx; const cc=state.cards[state.activeCard]; if(cc) state.cardMonth=cardOpenInvMi(cc); render(); });
   const addCardBtn=document.getElementById('addCardBtn'); if(addCardBtn) addCardBtn.onclick=openAddCardModal;
+  const cardConfig=document.getElementById('cardConfigBtn'); if(cardConfig) cardConfig.onclick=()=>openCardConfigModal(Math.min(state.activeCard||0,state.cards.length-1));
   const cardAdjust=document.getElementById('cardAdjustBtn'); if(cardAdjust) cardAdjust.onclick=()=>openAdjustFaturaModal(state.activeCard||0);
   const cardAddTx=document.getElementById('cardAddTxBtn'); if(cardAddTx) cardAddTx.onclick=()=>openCardTxModal(state.activeCard||0);
   const cmPrev=document.getElementById('cardMonthPrev'); if(cmPrev) cmPrev.onclick=()=>{ if(state.cardMonth==null) state.cardMonth=TODAY.monthIdx; state.cardMonth=((state.cardMonth-1)%12+12)%12; render(); };
@@ -1984,7 +2026,7 @@ function wireRouteExtras(){
   document.querySelectorAll('.cardTxDel').forEach(b=>b.onclick=()=>{
     const bank=b.dataset.bank, t=decodeURIComponent(b.dataset.t), v=parseFloat(b.dataset.v);
     const idx=state.transactions.findIndex(x=>x.card===bank && x.t===t && x.v===v);
-    if(idx>=0){ const removed=state.transactions[idx]; state.transactions.splice(idx,1); const c=state.cards.find(x=>x.bank===bank); if(c && removed.date && MONTHS_ABBR.indexOf(removed.date.month)===TODAY.monthIdx) c.balance=Math.max(0,c.balance-Math.abs(v)); }
+    if(idx>=0){ const removed=state.transactions[idx]; state.transactions.splice(idx,1); const c=state.cards.find(x=>x.bank===bank); if(c && txInvMi(removed)===cardOpenInvMi(c)) c.balance=Math.max(0,c.balance-Math.abs(v)); }
     render();
   });
   // cartão: dar baixa em quem pagou a parte dele
@@ -1997,7 +2039,7 @@ function wireRouteExtras(){
       <div style="display:flex;gap:8px"><button class="btn ghost" style="flex:1" id="txDelCancel">Cancelar</button><button class="btn primary" style="flex:1;background:var(--red);color:#fff" id="txDelOk">Excluir</button></div>`);
     document.getElementById('txDelCancel').onclick=closeModal;
     document.getElementById('txDelOk').onclick=()=>{
-      if(x.card && !x.pos){ const c=state.cards.find(cc=>cc.bank===x.card); if(c && x.date && MONTHS_ABBR.indexOf(x.date.month)===TODAY.monthIdx) c.balance=Math.max(0,c.balance-Math.abs(x.v)); }
+      if(x.card && !x.pos){ const c=state.cards.find(cc=>cc.bank===x.card); if(c && txInvMi(x)===cardOpenInvMi(c)) c.balance=Math.max(0,c.balance-Math.abs(x.v)); }
       if(x.account){ const a=(state.obBanks||[]).find(bk=>bk.key===x.account); if(a){ a.balance=(a.balance||0)-x.v; recalcAccounts(); } } // entrada devolve, gasto no débito re-credita
       const idx=state.transactions.indexOf(x); if(idx>=0) state.transactions.splice(idx,1);
       closeModal(); render();
@@ -2301,10 +2343,11 @@ function openCardTxModal(cardIdx){
     }
     const owedSum=shares.reduce((a,s)=>a+s.amt,0);
     if(!inst.checked){
-      // à vista: entra na fatura na data escolhida
+      // à vista: a data + o fechamento definem em qual fatura entra
       const date={day:D, month:MONTHS_ABBR[(M-1)]||TODAY.month};
-      c.balance += val;
-      state.transactions.unshift({ t:desc, s:`${cat} · Crédito · ${c.bank}`, v:-val, pos:false, icon:meta.icon, color:meta.color, cat, method:'Crédito', card:c.bank, shares, owed:owedSum, owedBy:(shares[0]?shares[0].name:''), date });
+      const invMi=invoiceMonthIdx(c, date); const invMonth=MONTHS_ABBR[invMi];
+      if(invMi===cardOpenInvMi(c)) c.balance += val; // só soma na fatura aberta
+      state.transactions.unshift({ t:desc, s:`${cat} · Crédito · ${c.bank}`, v:-val, pos:false, icon:meta.icon, color:meta.color, cat, method:'Crédito', card:c.bank, shares, owed:owedSum, owedBy:(shares[0]?shares[0].name:''), invMonth, date });
       if(date.month===TODAY.month) state.selectedDay=date.day;
     } else {
       // parcelado: 1 lançamento por mês, começando em "startOff"
@@ -2317,10 +2360,10 @@ function openCardTxModal(cardIdx){
         const pval=isLast? +(val-base*(N-1)).toFixed(2) : base;
         const pshares=shares.map((s,si)=>({ name:s.name, amt:(isLast? +(s.amt-sBase[si]*(N-1)).toFixed(2) : sBase[si]), paid:false })).filter(s=>s.amt>0);
         const powed=pshares.reduce((a,s)=>a+s.amt,0);
-        const pmonth=MONTHS_ABBR[(TODAY.monthIdx+startOff+k)%12];
+        const pmi=(TODAY.monthIdx+startOff+k)%12; const pmonth=MONTHS_ABBR[pmi];
         const pdate={day:D, month:pmonth};
-        state.transactions.unshift({ t:`${desc} (${k+1}/${N})`, s:`${cat} · Crédito · ${c.bank} · parcela ${k+1}/${N}`, v:-pval, pos:false, icon:meta.icon, color:meta.color, cat, method:'Crédito', card:c.bank, shares:pshares, owed:powed, owedBy:(pshares[0]?pshares[0].name:''), date:pdate, inst:{i:k+1, n:N, group} });
-        if(pmonth===TODAY.month) c.balance += pval; // só a parcela do mês corrente entra na fatura atual
+        state.transactions.unshift({ t:`${desc} (${k+1}/${N})`, s:`${cat} · Crédito · ${c.bank} · parcela ${k+1}/${N}`, v:-pval, pos:false, icon:meta.icon, color:meta.color, cat, method:'Crédito', card:c.bank, shares:pshares, owed:powed, owedBy:(pshares[0]?pshares[0].name:''), invMonth:pmonth, date:pdate, inst:{i:k+1, n:N, group} });
+        if(pmi===cardOpenInvMi(c)) c.balance += pval; // só a parcela da fatura aberta entra na fatura atual
       }
     }
     closeModal(); render();
@@ -2370,13 +2413,18 @@ function openEditCardTxModal(gi){
     const desc=document.getElementById('etDesc').value.trim()||x.t;
     const dv=document.getElementById('etDate').value||iso; const [,M,D]=dv.split('-').map(Number);
     const newMi=(M-1);
+    const newDate={day:D, month:MONTHS_ABBR[newMi]||(x.date&&x.date.month)||TODAY.month};
     const c=state.cards.find(cc=>cc.bank===x.card);
+    let newInvMonth=MONTHS_ABBR[newMi];
     if(c){
-      const oldEff=(oldMi===TODAY.monthIdx)?oldVal:0;
-      const newEff=(newMi===TODAY.monthIdx)?nv:0;
+      const openMi=cardOpenInvMi(c);
+      const oldInvMi=txInvMi(x);
+      const newInvMi=invoiceMonthIdx(c, newDate); newInvMonth=MONTHS_ABBR[newInvMi];
+      const oldEff=(oldInvMi===openMi)?oldVal:0;
+      const newEff=(newInvMi===openMi)?nv:0;
       c.balance=Math.max(0, c.balance - oldEff + newEff);
     }
-    x.t=desc; x.v=-nv; x.date={day:D, month:MONTHS_ABBR[newMi]||(x.date&&x.date.month)||TODAY.month};
+    x.t=desc; x.v=-nv; x.date=newDate; x.invMonth=newInvMonth;
     // reconstrói as divisões preservando o recebido (limitado ao novo valor de cada parte)
     x.shares = work.filter(s=>(s.amt||0)>0).map(s=>{ const amt=Math.min(s.amt, nv); const received=Math.min(s.received||0, amt); return {name:(s.name||'').trim()||'Alguém', amt, received, paid: received>=amt-0.001}; });
     x.owed = x.shares.reduce((a,s)=>a+s.amt,0);
@@ -2388,9 +2436,9 @@ function openEditCardTxModal(gi){
 // move o mês de TODOS os lançamentos de um cartão (mantém divisão e recebido)
 function shiftCardMonths(bank, delta){
   (state.transactions||[]).forEach(x=>{
-    if(x.card===bank && !x.pos && x.date){
-      const mi=MONTHS_ABBR.indexOf(x.date.month);
-      if(mi>=0) x.date={...x.date, month:MONTHS_ABBR[((mi+delta)%12+12)%12]};
+    if(x.card===bank && !x.pos){
+      if(x.date){ const mi=MONTHS_ABBR.indexOf(x.date.month); if(mi>=0) x.date={...x.date, month:MONTHS_ABBR[((mi+delta)%12+12)%12]}; }
+      if(x.invMonth){ const im=MONTHS_ABBR.indexOf(x.invMonth); if(im>=0) x.invMonth=MONTHS_ABBR[((im+delta)%12+12)%12]; } // move também o mês da fatura
     }
   });
 }
@@ -2414,7 +2462,7 @@ function openReceiveModal(bank, name){
   // só marca a parte DAQUELE mês (parcelas de outros meses ficam pra quando você abrir aquele mês)
   const cm = state.cardMonth==null?TODAY.monthIdx:((state.cardMonth%12)+12)%12;
   const isCurrent = cm===TODAY.monthIdx;
-  const inMonth = x => x.card===bank && !x.pos && (isCurrent ? (!x.date || MONTHS_ABBR.indexOf(x.date.month)===cm) : (x.date && MONTHS_ABBR.indexOf(x.date.month)===cm));
+  const inMonth = x => { if(x.card!==bank || x.pos) return false; const i=txInvMi(x); return isCurrent ? (i<0 || i===cm) : (i===cm); };
   const entries=[];
   (state.transactions||[]).forEach(x=>{ if(inMonth(x)){ txShares(x).forEach(s=>{ if((s.name||'Alguém')===name){ if(s.amt-shareRecv(s)>0.001) entries.push(s); } }); } });
   const owedRemaining=entries.reduce((a,s)=>a+(s.amt-shareRecv(s)),0);
@@ -2518,15 +2566,42 @@ function openAddCardModal(){
     <div class="modal-head"><h3>Novo cartão</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
     <div class="form-row"><label>Nome / banco</label><input id="ncName" placeholder="Ex: Nubank, Itaú Click"></div>
     <div class="form-row"><label>Fatura atual (R$)</label><input id="ncBal" type="number" step="0.01" placeholder="0,00"></div>
-    <div class="form-row"><label>Dia do vencimento</label><input id="ncDue" type="number" min="1" max="31" placeholder="Ex: 10"></div>
-    <button class="btn primary" style="width:100%" id="ncSave">Adicionar cartão</button>
+    <div class="qa-two">
+      <div class="qa-field"><label>Fecha dia</label><input id="ncClose" type="number" min="1" max="31" placeholder="Ex: 3"></div>
+      <div class="qa-field"><label>Vence dia</label><input id="ncDue" type="number" min="1" max="31" placeholder="Ex: 10"></div>
+    </div>
+    <div style="font-size:11px;color:var(--ink-faint);margin:6px 2px 0">Compras feitas depois do dia de fechamento entram na próxima fatura.</div>
+    <button class="btn primary" style="width:100%;margin-top:10px" id="ncSave">Adicionar cartão</button>
   `);
   document.getElementById('ncSave').onclick=()=>{
     const name=document.getElementById('ncName').value.trim(); if(!name) return;
     const bal=parseFloat(document.getElementById('ncBal').value)||0;
     const due=parseInt(document.getElementById('ncDue').value)||10;
-    state.cards.push({bank:name, kind:`Crédito · fatura dia ${due}`, bg:CARD_GRADS[state.cards.length%CARD_GRADS.length], balance:bal});
+    const close=parseInt(document.getElementById('ncClose').value)||0;
+    state.cards.push({bank:name, kind:`Crédito · fatura dia ${due}`, bg:CARD_GRADS[state.cards.length%CARD_GRADS.length], balance:bal, due, close:close||undefined});
     state.activeCard=state.cards.length-1;
+    closeModal(); render();
+  };
+}
+function openCardConfigModal(idx){
+  const c=state.cards[idx]; if(!c) return;
+  openModal(`
+    <div class="modal-head"><h3>Configurar · ${c.bank}</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
+    <div class="form-row"><label>Nome / banco</label><input id="ccName" value="${(c.bank||'').replace(/"/g,'&quot;')}"></div>
+    <div class="qa-two">
+      <div class="qa-field"><label>Fecha dia</label><input id="ccClose" type="number" min="1" max="31" value="${cardCloseDay(c)||''}" placeholder="Ex: 3"></div>
+      <div class="qa-field"><label>Vence dia</label><input id="ccDue" type="number" min="1" max="31" value="${cardDueDay(c)||''}" placeholder="Ex: 10"></div>
+    </div>
+    <div style="font-size:11px;color:var(--ink-faint);margin:6px 2px 0">O "fecha dia" define a virada da fatura: compras depois dele caem na próxima. É o que faz a compra ir pro mês certo automaticamente.</div>
+    <button class="btn primary" style="width:100%;margin-top:10px" id="ccSave">Salvar</button>
+  `);
+  document.getElementById('ccSave').onclick=()=>{
+    const name=document.getElementById('ccName').value.trim()||c.bank;
+    const due=parseInt(document.getElementById('ccDue').value)||cardDueDay(c)||10;
+    const close=parseInt(document.getElementById('ccClose').value)||0;
+    const oldBank=c.bank;
+    if(name!==oldBank){ (state.transactions||[]).forEach(t=>{ if(t.card===oldBank) t.card=name; }); } // mantém os lançamentos vinculados
+    c.bank=name; c.due=due; c.close=close||undefined; c.kind=`Crédito · fatura dia ${due}`;
     closeModal(); render();
   };
 }
