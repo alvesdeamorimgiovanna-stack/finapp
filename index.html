@@ -684,7 +684,7 @@ function ic(name,cls){ return `<span class="${cls||''}" style="display:inline-fl
    ============================================================ */
 const MONTHS_ABBR = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const APP_VERSION = 'v28 · pagar fatura da conta';
+const APP_VERSION = 'v29 · pagar cartão já sai da conta certa';
 const _NOW = new Date();
 const CUR_YEAR = _NOW.getFullYear();
 const TODAY = { day:_NOW.getDate(), monthIdx:_NOW.getMonth(), month:MONTHS_ABBR[_NOW.getMonth()] }; // data real
@@ -2459,18 +2459,20 @@ function openShiftMonthsModal(bank){
 function openPayInvoiceModal(cardIdx, monthKey, fatura, real){
   const c=state.cards[cardIdx]; if(!c) return;
   const banks=state.obBanks||[];
+  // se existir uma conta com o mesmo nome do cartão (ex.: cartão Itaú → conta Itaú), já vem selecionada
+  const defKey = banks.length ? ((banks.find(b=>(b.name||'').toLowerCase()===(c.bank||'').toLowerCase())||banks[0]).key) : '';
   const mi=MONTHS_ABBR.indexOf(monthKey);
   openModal(`
     <div class="modal-head"><h3>Pagar fatura · ${mi>=0?MONTH_NAMES[mi]:monthKey}</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
     <p style="font-size:13px;color:var(--ink-faint);margin:0 0 12px">Fatura total ${BRL(fatura)} · sua parte ${BRL(real)}.</p>
     <div class="form-row"><label>Quanto você pagou?</label><input id="pyVal" type="text" placeholder="R$ 0,00"><div style="font-size:11.5px;color:var(--ink-faint);margin-top:5px">Vem preenchido com a sua parte — ajuste se pagou a fatura cheia ou outro valor.</div></div>
     <div class="form-row"><label>De qual conta saiu?</label><div class="chip-select" id="pyFrom">
-      ${banks.length ? banks.map((b,idx)=>`<span class="opt ${idx===0?'sel':''}" data-k="${b.key}">${b.name}</span>`).join('')+`<span class="opt" data-k="">Não descontar</span>` : `<span class="opt sel" data-k="">Não descontar</span>`}
+      ${banks.length ? banks.map(b=>`<span class="opt ${b.key===defKey?'sel':''}" data-k="${b.key}">${b.name}</span>`).join('')+`<span class="opt" data-k="">Não descontar</span>` : `<span class="opt sel" data-k="">Não descontar</span>`}
     </div></div>
     <button class="btn primary" style="width:100%" id="pySave">${ic('check')} Confirmar pagamento</button>
   `);
   attachMoneyMask(document.getElementById('pyVal'), real);
-  let key=banks.length?banks[0].key:'';
+  let key=defKey;
   document.querySelectorAll('#pyFrom .opt').forEach(o=>o.onclick=()=>{ document.querySelectorAll('#pyFrom .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); key=o.dataset.k; });
   document.getElementById('pySave').onclick=()=>{
     const v=parseMoney(document.getElementById('pyVal').value)||0; if(v<=0) return;
