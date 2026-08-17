@@ -684,7 +684,7 @@ function ic(name,cls){ return `<span class="${cls||''}" style="display:inline-fl
    ============================================================ */
 const MONTHS_ABBR = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const APP_VERSION = 'v29 · pagar cartão já sai da conta certa';
+const APP_VERSION = 'v30 · transferência entre contas';
 const _NOW = new Date();
 const CUR_YEAR = _NOW.getFullYear();
 const TODAY = { day:_NOW.getDate(), monthIdx:_NOW.getMonth(), month:MONTHS_ABBR[_NOW.getMonth()] }; // data real
@@ -976,7 +976,10 @@ function accountsSection(){
     <div style="display:flex;justify-content:space-between;align-items:center;padding:2px 4px;font-size:12.5px;color:var(--ink-dim)">
       <span>Saldo disponível (contas marcadas)</span><strong class="num" style="color:var(--purple)">${BRL(t.dispTotal)}</strong>
     </div>
-    <button class="btn ghost" id="addAccountBtn" style="width:100%">${ic('plus')} Nova conta</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn ghost" id="addAccountBtn" style="flex:1">${ic('plus')} Nova conta</button>
+      ${banks.length>=2?`<button class="btn ghost" id="transferBtn" style="flex:1">${ic('wallet')} Transferir</button>`:''}
+    </div>
   </div>`;
 }
 
@@ -2104,6 +2107,7 @@ function wireRouteExtras(){
   document.querySelectorAll('.acctEdit').forEach(b=>b.onclick=()=>openAccountModal(+b.dataset.i));
   document.querySelectorAll('.acctDel').forEach(b=>b.onclick=()=>{ state.obBanks.splice(+b.dataset.i,1); recalcAccounts(); render(); });
   const addAcct=document.getElementById('addAccountBtn'); if(addAcct) addAcct.onclick=()=>openAccountModal();
+  const transferBtn=document.getElementById('transferBtn'); if(transferBtn) transferBtn.onclick=openTransferModal;
 
   // fab
   const fab = document.getElementById('fabAdd');
@@ -2184,7 +2188,8 @@ function openBalanceDetail(){
     ${disp.length? disp.map(b=>`<div class="settle-row"><span class="who">${ic('bank')} ${b.name}</span><span class="amt num">${BRL(b.balance||0)}</span></div>`).join('') : '<div class="empty" style="padding:14px">Nenhuma conta marcada como disponível.</div>'}
     <div class="settle-row" style="border-top:2px solid var(--line);margin-top:4px"><span class="who" style="font-weight:800">Total disponível</span><span class="amt num" style="font-weight:800;color:var(--purple)">${BRL(t.dispTotal)}</span></div>
     ${others.length?`<div class="chart-sub-title" style="margin-top:14px">Fora do disponível</div>${others.map(b=>`<div class="settle-row" style="opacity:.7"><span class="who">${ic('bank')} ${b.name}</span><span class="amt num">${BRL(b.balance||0)}</span></div>`).join('')}<div class="settle-row"><span class="who" style="font-weight:700">Total geral (todas as contas)</span><span class="amt num" style="font-weight:700">${BRL(state.accountsTotal||0)}</span></div>`:''}
-    <p style="font-size:11.5px;color:var(--ink-faint);margin:12px 2px 0">Escolha quais contas entram no disponível em Ajustes → Minhas contas.</p>
+    ${(state.transfers||[]).length?`<div class="chart-sub-title" style="margin-top:14px">Últimas transferências</div>${(state.transfers||[]).slice(0,5).map(tr=>`<div class="settle-row" style="opacity:.85"><span class="who">${ic('wallet')} ${tr.fromName} → ${tr.toName}</span><span class="amt num">${BRL(tr.amount)}</span></div>`).join('')}`:''}
+    <p style="font-size:11.5px;color:var(--ink-faint);margin:12px 2px 0">Escolha quais contas entram no disponível em Ajustes → Minhas contas. Use "Transferir" pra mover dinheiro entre elas.</p>
   `);
 }
 function openVarDetail(){
@@ -2565,6 +2570,30 @@ function openAccountModal(editIdx){
     if(editing){ state.obBanks[editIdx]={...cur, name, balance, inDisp}; }
     else{ state.obBanks.push({key:'acc'+Date.now(), name, color:'#834AFF', balance, inDisp, custom:true}); }
     recalcAccounts(); closeModal(); render();
+  };
+}
+
+function openTransferModal(){
+  const banks=state.obBanks||[];
+  if(banks.length<2){ openModal(`<div class="modal-head"><h3>Transferir</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div><p style="font-size:13px;color:var(--ink-dim)">Você precisa de pelo menos duas contas cadastradas.</p>`); return; }
+  openModal(`
+    <div class="modal-head"><h3>Transferir entre contas</h3><button class="modal-close" id="modalCloseBtn">${ic('x')}</button></div>
+    <p style="font-size:12.5px;color:var(--ink-faint);margin:0 0 12px">Move dinheiro entre as suas contas (ex.: mandar sua parte da XP pra Itaú antes de pagar a fatura). Não é gasto nem entrada — só troca de lugar.</p>
+    <div class="form-row"><label>De qual conta?</label><div class="chip-select" id="trFrom">${banks.map((b,i)=>`<span class="opt ${i===0?'sel':''}" data-k="${b.key}">${b.name}</span>`).join('')}</div></div>
+    <div class="form-row"><label>Para qual conta?</label><div class="chip-select" id="trTo">${banks.map((b,i)=>`<span class="opt ${i===1?'sel':''}" data-k="${b.key}">${b.name}</span>`).join('')}</div></div>
+    <div class="form-row"><label>Valor</label><input id="trVal" type="text" placeholder="R$ 0,00"></div>
+    <button class="btn primary" style="width:100%" id="trSave">${ic('check')} Transferir</button>
+  `);
+  attachMoneyMask(document.getElementById('trVal'));
+  let fromK=banks[0].key, toK=banks[1].key;
+  document.querySelectorAll('#trFrom .opt').forEach(o=>o.onclick=()=>{ document.querySelectorAll('#trFrom .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); fromK=o.dataset.k; });
+  document.querySelectorAll('#trTo .opt').forEach(o=>o.onclick=()=>{ document.querySelectorAll('#trTo .opt').forEach(x=>x.classList.remove('sel')); o.classList.add('sel'); toK=o.dataset.k; });
+  document.getElementById('trSave').onclick=()=>{
+    const v=parseMoney(document.getElementById('trVal').value)||0; if(v<=0){ document.getElementById('trVal').style.borderColor='var(--red)'; return; }
+    if(fromK===toK){ document.querySelector('#trTo').style.outline='2px solid var(--red)'; return; }
+    const from=banks.find(b=>b.key===fromK), to=banks.find(b=>b.key===toK);
+    if(from&&to){ from.balance=(from.balance||0)-v; to.balance=(to.balance||0)+v; recalcAccounts(); if(!state.transfers) state.transfers=[]; state.transfers.unshift({from:fromK, fromName:from.name, to:toK, toName:to.name, amount:v, ts:Date.now()}); }
+    closeModal(); render();
   };
 }
 
@@ -3349,7 +3378,7 @@ function wireBottomNav(){
    PERSISTÊNCIA — salva tudo no navegador (mesmo aparelho)
    ============================================================ */
 const SAVE_KEY = 'finapp_state_v1';
-const PERSIST_KEYS = ['onboardingDone','profile','monthLabel','incomes','fixedOut','investments','cards','transactions','goals','groups','events','accountsTotal','obBanks','obCards','obIncome','settings','chat','selectedDay'];
+const PERSIST_KEYS = ['onboardingDone','profile','monthLabel','incomes','fixedOut','investments','cards','transactions','goals','groups','events','accountsTotal','obBanks','obCards','obIncome','settings','chat','selectedDay','transfers'];
 function persist(){
   try{
     const o={}; PERSIST_KEYS.forEach(k=>{ if(state[k]!==undefined) o[k]=state[k]; });
